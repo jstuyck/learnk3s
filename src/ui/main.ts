@@ -5,7 +5,7 @@ import { runCommand } from '../core/cli';
 import { hwPrompt } from '../core/hwshell';
 import { burnRate, profit, revenueRate } from '../core/economy';
 import { calcStars } from '../core/scoring';
-import { newState, step } from '../core/sim';
+import { endpoints, newState, step, trafficRate, trafficService } from '../core/sim';
 import type { Campaign, Level, Line, State } from '../core/types';
 import { CAMPAIGNS } from '../data/campaigns';
 import { VH, VW, draw, nsAt, podAt } from './render';
@@ -149,8 +149,9 @@ function startLevel(i: number): void {
   $('st-max').textContent = L.traffic && !L.econ ? ' / ' + L.traffic.maxFail : '';
   $('g-stats').style.display = L.traffic ? '' : 'none';
   $('money').style.display = L.econ ? '' : 'none';
-  $('btn-traffic').style.display = L.traffic && !L.traffic.auto ? '' : 'none';
+  $('traffic-bar').style.display = L.traffic && !L.traffic.auto ? '' : 'none';
   $<HTMLButtonElement>('btn-traffic').disabled = false;
+  $('btn-traffic').style.display = '';
   $('cheats').innerHTML = L.cheats.map(c => {
     const [cmd, d] = c.split(' | ');
     return '<li><code class="hcmd" role="button" tabindex="0" data-cmd="' + escapeHtml(cmd + ' ') + '" title="Click to start this command in the terminal">' + escapeHtml(cmd) + '</code> <span class="dim">' + d + '</span></li>';
@@ -418,6 +419,32 @@ $('btn-reset').addEventListener('click', () => {
   $('m-no').onclick = closeModal;
 });
 
+// ---- the traffic bar: says whether the cluster is ready and offers the big button -------------------------
+function updateTrafficBar(st: State): void {
+  const tr = st.level.traffic;
+  const bar = $('traffic-bar');
+  if (!tr || tr.auto) { bar.style.display = 'none'; return; }
+  const btn = $<HTMLButtonElement>('btn-traffic');
+  let cls = 'traffic-bar', state: string, note: string, ready = false;
+  if (st.mode === 'live') {
+    cls += ' live';
+    state = '● Traffic is live';
+    note = trafficRate(tr, st.tt).toFixed(1) + ' requests/second reaching the cluster. Served ' + st.stats.served + ', failed ' + st.stats.failed + (st.level.econ ? '' : ' of ' + tr.maxFail + ' allowed') + '.';
+    btn.style.display = 'none';
+  } else {
+    btn.style.display = '';
+    const svc = trafficService(st, tr);
+    const eps = svc ? endpoints(st, svc).filter(p => p.phase === 'Running').length : 0;
+    if (!svc) { cls += ' warn'; state = '⚠ Traffic is paused: no Service yet'; note = 'Users reach your pods through a Service for "' + tr.app + '". Without one every request fails. You can open the doors anyway, but you will lose requests.'; }
+    else if (!eps) { cls += ' warn'; state = '⚠ Traffic is paused: no ready pods'; note = 'Service "' + svc.name + '" has no Running pods behind it yet. Check kubectl get pods and kubectl get endpoints.'; }
+    else { ready = true; cls += ' ready'; state = '✓ Ready for traffic'; note = 'Service "' + svc.name + '" has ' + eps + ' ready pod' + (eps === 1 ? '' : 's') + '. Press the button when you are done preparing: users start arriving immediately.'; }
+  }
+  bar.className = cls;
+  $('traffic-state').textContent = state;
+  $('traffic-note').textContent = note;
+  btn.classList.toggle('nudge', ready && !st.outcome);
+}
+
 // ---- HUD ------------------------------------------------------------------
 const money = (x: number): string => (x < 0 ? '-' : '') + '$' + Math.abs(x).toFixed(2);
 
@@ -437,7 +464,7 @@ function updateHud(st: State): void {
     r.className = net >= 0 ? 'ok' : 'bad';
     $('st-burn').textContent = 'burn $' + burnRate(st).total.toFixed(2) + '/s';
   }
-  if (st.mode === 'live') $('btn-traffic').style.display = 'none';
+  updateTrafficBar(st);
 }
 
 // ---- main loop ------------------------------------------------------------

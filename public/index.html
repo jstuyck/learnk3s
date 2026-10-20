@@ -50,7 +50,6 @@
       <span id="money" class="money" title="Profit / target, net per second, burn rate"><b id="st-profit">$0.00</b><span id="st-target" class="dim"></span> <span id="st-rate"></span> <span id="st-burn" class="dim"></span></span>
       <span title="Time" class="dim" id="st-time">0s</span>
     </div>
-    <button class="btn accent" id="btn-traffic">&#9654; Open to traffic</button>
     <div class="seg">
       <button class="btn" data-speed="0" title="Pause">&#10074;&#10074;</button>
       <button class="btn active" data-speed="1">1&times;</button>
@@ -66,6 +65,10 @@
         <button class="vtab" id="tab-namespaces" title="Every namespace and its pods, system pods included (click a namespace to list its pods)">Namespaces &amp; system pods</button>
       </div>
       <div class="canvas-wrap"><canvas id="cv"></canvas></div>
+      <div class="traffic-bar" id="traffic-bar" style="display:none">
+        <div class="traffic-info"><div class="traffic-state" id="traffic-state"></div><div class="traffic-note" id="traffic-note"></div></div>
+        <button class="traffic-go" id="btn-traffic">&#9654; Open to traffic</button>
+      </div>
       <div class="term">
         <div class="term-bar"><span>Terminal</span><span class="spacer"></span><button class="btn small" id="term-font-minus" title="Smaller text">A&minus;</button><button class="btn small" id="term-font-plus" title="Larger text">A+</button><button class="btn small" id="term-expand" title="Hide the picture and give the terminal the whole height">Expand</button></div>
         <div id="term-out" class="term-out"></div>
