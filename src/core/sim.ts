@@ -305,7 +305,11 @@ function reconcileDeployment(s: State, d: Deployment): void {
 
   if (!old.length) {
     if (owned.length >= d.replicas) d.blocked = undefined;
-    if (owned.length < d.replicas) { for (let i = owned.length; i < d.replicas; i++) if (!trySpawn(s, d)) break; s.cpPulse = 1; }
+    if (owned.length < d.replicas) {
+      let made = 0;
+      for (let i = owned.length; i < d.replicas; i++) { if (!trySpawn(s, d)) break; made++; }
+      if (made) s.cpPulse = 1;
+    }
     else if (owned.length > d.replicas) {
       const victims = owned.slice().sort((a, b) => (Number(isReady(a)) - Number(isReady(b))) || (a.age - b.age));
       for (const p of victims.slice(0, owned.length - d.replicas)) terminate(s, p);
@@ -318,7 +322,7 @@ function reconcileDeployment(s: State, d: Deployment): void {
     for (const p of old) terminate(s, p);
     s.cpPulse = 1; return;
   }
-  if (cur.length < d.replicas && owned.length < d.replicas + 1) { trySpawn(s, d); s.cpPulse = 1; }
+  if (cur.length < d.replicas && owned.length < d.replicas + 1) { if (trySpawn(s, d)) s.cpPulse = 1; }
   else if (ready > d.replicas) {
     const victim = old.filter(isReady).sort((a, b) => b.age - a.age)[0];
     if (victim) { terminate(s, victim); s.cpPulse = 1; }

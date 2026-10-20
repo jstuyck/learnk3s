@@ -101,3 +101,13 @@ describe('workloads in namespaces', () => {
     expect(cmd(s, 'kubectl delete pod nope -n kube-system')).toMatch(/belongs to the cluster/);
   });
 });
+
+describe('control plane pulse', () => {
+  it('does not blink while a quota keeps refusing pods', () => {
+    const s = start('n-quota');
+    sim(s, 6);
+    s.cpPulse = 0;
+    sim(s, 3);
+    expect(s.cpPulse).toBe(0);
+  });
+});
