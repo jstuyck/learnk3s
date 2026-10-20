@@ -17,7 +17,7 @@ export const NAMESPACE_LEVELS: Level[] = [
     setup(s) { addDeployment(s, { name: 'web', image: 'nginx', replicas: 2 }); },
     story: `<p>A cluster is divided into <b>namespaces</b>: separate rooms that group and isolate objects. Four exist from the start: <code>default</code> (where your things go), <code>kube-system</code> (the cluster's own components), <code>kube-public</code> and <code>kube-node-lease</code>.</p>
       <p>Plain <code>kubectl get pods</code> only shows <code>default</code>. Add <code>-n NAME</code> for another namespace or <code>-A</code> (<code>--all-namespaces</code>) for all of them. In <code>kube-system</code> you will find <b>CoreDNS</b> (cluster DNS), <b>etcd</b>, the <b>API server</b>, the <b>scheduler</b> and <b>controller manager</b> (static pods on the first node), and one <b>kube-proxy</b> and one network (CNI) pod <i>per node</i>.</p>
-      <p>You can also see all of this in the picture: press the <b>Namespaces</b> button above the cluster view and click a namespace.</p>`,
+      <p>You can also see all of this in the picture: click the <b>Namespaces &amp; system pods</b> tab above the picture, then click a namespace.</p>`,
     objectives: [
       { id: 'list', text: 'List the namespaces with kubectl get namespaces', check: s => !!s.flags.listedNamespaces },
       { id: 'all', text: 'List pods from every namespace with -A', check: s => !!s.flags.usedAllNamespaces },
@@ -25,14 +25,14 @@ export const NAMESPACE_LEVELS: Level[] = [
       { id: 'wide', text: 'Find which node runs etcd (get pods -n kube-system -o wide)', check: s => !!s.flags.usedWideSystem },
       { id: 'dns', text: 'Find the cluster DNS Service (get svc -n kube-system)', check: s => !!s.flags.listedKubeDns },
       { id: 'inspect', text: 'Describe a CoreDNS pod', check: s => !!s.flags.inspectedSystemPod },
-      { id: 'gui', text: 'Open the Namespaces view in the picture', check: s => !!s.flags.openedNamespaceView },
+      { id: 'gui', text: 'Open the "Namespaces & system pods" tab above the picture', check: s => !!s.flags.openedNamespaceView },
     ],
     cheats: ['kubectl get | namespaces, pods, services', 'kubectl describe | one object in detail', 'kubectl logs | what a system pod says'],
     hints: [
       'kubectl get namespaces (or ns), then kubectl get pods and compare with kubectl get pods -A.',
       'kubectl get pods -n kube-system -o wide shows the NODE of every system pod.',
       'kubectl get svc -n kube-system: kube-dns at 10.96.0.10 is the address every pod uses to resolve names.',
-      'kubectl describe pod POD -n kube-system (copy a coredns-... name). Then press the Namespaces button above the cluster picture.',
+      'kubectl describe pod POD -n kube-system (copy a coredns-... name). Then click the "Namespaces & system pods" tab above the picture.',
     ],
     codex: { title: 'Namespaces & kube-system', text: 'A <b>namespace</b> scopes names: two objects may share a name if they live in different namespaces. <code>-n NAME</code> picks one, <code>-A</code> means all. <b>kube-system</b> holds what Kubernetes needs to run itself: <b>CoreDNS</b>, <b>etcd</b>, <b>kube-apiserver</b>, <b>kube-scheduler</b>, <b>kube-controller-manager</b>, plus <b>kube-proxy</b> and the network plugin on every node. Nodes themselves are not namespaced.' },
   },

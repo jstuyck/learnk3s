@@ -163,3 +163,10 @@ h1 { font-size: clamp(2.4rem, 7vw, 3.6rem); margin: 10px 0 4px; letter-spacing: 
 .tut-actions .btn.small { margin-top: 0; }
 .tut-why { font-size: .9rem; color: #cfdaf7; }
 .tut-why code { font-size: .85em; }
+
+/* picture view tabs (nodes / namespaces) */
+.view-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.vtab { background: var(--panel); color: var(--dim); border: 1px solid var(--line); border-radius: 10px 10px 0 0; padding: 7px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+.vtab:hover { color: var(--text); border-color: #36497c; }
+.vtab.active { color: #fff; background: var(--panel2); border-color: var(--accent2); box-shadow: 0 -2px 0 var(--accent2) inset; }
+.left.term-big .view-tabs { display: none; }

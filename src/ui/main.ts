@@ -346,11 +346,13 @@ $('term-expand').addEventListener('click', () => {
 
 function setView(v: View): void {
   view = v;
-  $('btn-view').textContent = v === 'namespaces' ? 'Cluster' : 'Namespaces';
-  $('btn-view').style.display = S?.level.hardway === 'machines' ? 'none' : '';
+  $('tab-cluster').classList.toggle('active', v === 'cluster');
+  $('tab-namespaces').classList.toggle('active', v === 'namespaces');
+  $('view-tabs').style.display = S?.level.hardway === 'machines' ? 'none' : '';
   if (v === 'namespaces' && S) S.flags.openedNamespaceView = true;
 }
-$('btn-view').addEventListener('click', () => setView(view === 'namespaces' ? 'cluster' : 'namespaces'));
+$('tab-cluster').addEventListener('click', () => setView('cluster'));
+$('tab-namespaces').addEventListener('click', () => setView('namespaces'));
 $('btn-brief').addEventListener('click', openMission);
 $('end-view').addEventListener('click', openResults);
 $('end-next').addEventListener('click', () => startLevel(curLevel + 1));
