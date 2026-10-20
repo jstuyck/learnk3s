@@ -178,3 +178,11 @@ h1 { font-size: clamp(2.4rem, 7vw, 3.6rem); margin: 10px 0 4px; letter-spacing: 
 #end-card.win { animation: glow 1.6s ease-in-out infinite; }
 #end-card.fail { border-color: var(--bad); }
 @media (prefers-reduced-motion: reduce) { .btn.nudge, #end-card.win { animation: none; } }
+
+/* commands inside hints and the cheat list: code font, click to put them in the terminal */
+.hcmd { font-family: var(--mono); font-size: .88em; background: #0b1430; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: #b9ccff; cursor: pointer; word-break: break-all; transition: background .15s, border-color .15s; }
+.hcmd:hover, .hcmd:focus-visible { background: #14224a; border-color: var(--accent2); color: #fff; }
+.hcmd.copied { background: #123a2a; border-color: var(--ok); color: var(--ok); }
+.hcmd.copied::after { content: ' ¹3 in terminal'; font-size: .8em; }
+.tut-cmd { cursor: pointer; }
+.tut-cmd:hover { border-color: var(--accent2); }

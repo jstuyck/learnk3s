@@ -11,6 +11,7 @@ import { CAMPAIGNS } from '../data/campaigns';
 import { VH, VW, draw, nsAt, podAt } from './render';
 import type { View } from './render';
 import { loadSave, recordWin, writeSave, emptySave } from './save';
+import { escapeHtml, renderHint } from './hints';
 import { initShell } from './shell';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -152,7 +153,7 @@ function startLevel(i: number): void {
   $<HTMLButtonElement>('btn-traffic').disabled = false;
   $('cheats').innerHTML = L.cheats.map(c => {
     const [cmd, d] = c.split(' | ');
-    return '<li><code>' + cmd + '</code> <span class="dim">' + d + '</span></li>';
+    return '<li><code class="hcmd" role="button" tabindex="0" data-cmd="' + escapeHtml(cmd + ' ') + '" title="Click to start this command in the terminal">' + escapeHtml(cmd) + '</code> <span class="dim">' + d + '</span></li>';
   }).join('');
   $('hints').innerHTML = '';
   $<HTMLButtonElement>('btn-hint').disabled = false;
@@ -331,7 +332,7 @@ $('btn-hint').addEventListener('click', () => {
   if (!S) return;
   const hs = S.level.hints, n = $('hints').children.length;
   if (n >= hs.length) return;
-  const li = document.createElement('li'); li.textContent = hs[n]; $('hints').appendChild(li);
+  const li = document.createElement('li'); li.innerHTML = renderHint(hs[n]); $('hints').appendChild(li);
   S.hintsUsed++;
   if (n + 1 >= hs.length) $<HTMLButtonElement>('btn-hint').disabled = true;
 });
@@ -347,6 +348,28 @@ $('term-expand').addEventListener('click', () => {
   $('term-expand').textContent = big ? 'Show picture' : 'Expand';
   $('term-out').scrollTop = $('term-out').scrollHeight;
 });
+
+/** Put a command in the terminal input (and on the clipboard) so the player can run or edit it. */
+function putInTerminal(cmd: string): void {
+  const input = $<HTMLInputElement>('term-input');
+  input.value = cmd;
+  input.focus();
+  input.setSelectionRange(cmd.length, cmd.length);
+  try { void navigator.clipboard?.writeText(cmd.trim()); } catch { /* clipboard not available */ }
+}
+for (const id of ['hints', 'cheats', 'tut-why']) {
+  const list = $(id);
+  const pick = (e: Event) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('.hcmd');
+    if (!el || !el.dataset.cmd) return;
+    putInTerminal(el.dataset.cmd);
+    el.classList.add('copied');
+    setTimeout(() => el.classList.remove('copied'), 700);
+  };
+  list.addEventListener('click', pick);
+  list.addEventListener('keydown', e => { if ((e as KeyboardEvent).key === 'Enter' || (e as KeyboardEvent).key === ' ') { e.preventDefault(); pick(e); } });
+}
+$('tut-cmd').addEventListener('click', () => { const t = $('tut-cmd').textContent; if (t) putInTerminal(t); });
 
 function setView(v: View): void {
   view = v;
