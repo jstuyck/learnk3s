@@ -5,7 +5,7 @@ import type { Ctx } from './ctx';
 import { parseLabels, strFlag } from './ctx';
 import { labelText, matchesSelector } from './format';
 import {
-  endpoints, recordRevision, selectorMatches, snapshot, templateOf, tplOf,
+  endpoints, keyOf, recordRevision, selectorMatches, snapshot, templateOf, tplOf,
 } from './sim';
 import type { Deployment, Pod, Service } from './types';
 
@@ -27,7 +27,7 @@ export function labelCmd(c: Ctx): void {
     targets = [];
     for (const n of names) { const p = c.findPod(n); if (!p) { c.notFound('pod', n); return; } targets.push(p); }
   } else if (selector || flags.all) {
-    targets = s.pods.filter(p => (flags.all ? true : matchesSelector(p, selector)));
+    targets = s.pods.filter(p => p.ns === c.ns && (flags.all ? true : matchesSelector(p, selector)));
   } else { c.err('error: one or more resources must be specified as <resource> <name> or <resource>/<name>'); return; }
   if (!targets.length) { c.say('No resources found in default namespace.', 'dim'); return; }
   for (const p of targets) {
@@ -55,7 +55,7 @@ export function setSelectorCmd(c: Ctx, args: string[]): void {
   const name = args[1];
   const expr = args.slice(2).join(',');
   if (!['service', 'svc', 'services'].includes(kind ?? '') || !name || !expr) { c.err('usage: kubectl set selector service NAME key=value'); return; }
-  const svc = s.services.find(v => v.name === name);
+  const svc = s.services.find(v => v.name === name && v.ns === c.ns);
   if (!svc) { c.notFound('service', name); return; }
   const sel = parseLabels(expr);
   if (!sel || !Object.keys(sel).length) { c.err('error: invalid selector "' + expr + '", expected key=value'); return; }
@@ -154,13 +154,19 @@ export function patchCmd(c: Ctx): void {
 }
 
 // ---- kubectl exec / port-forward --------------------------------------------------------------
-function hostService(c: Ctx, host: string): Service | undefined {
-  const bare = host.replace(/^https?:\/\//, '').split('/')[0].split(':')[0].replace(/\.default(\.svc(\.cluster\.local)?)?$/, '');
-  return c.s.services.find(v => v.name === bare);
+/**
+ * Cluster DNS: NAME resolves only inside the pod's own namespace; NAME.NAMESPACE[.svc[.cluster.local]] works from anywhere.
+ */
+function hostService(c: Ctx, host: string, fromNs: string): Service | undefined {
+  const bare = host.replace(/^https?:\/\//, '').split('/')[0].split(':')[0].replace(/\.$/, '').replace(/\.cluster\.local$/, '').replace(/\.svc$/, '');
+  const parts = bare.split('.');
+  if (parts.length === 1) return c.s.services.find(v => v.name === parts[0] && v.ns === fromNs);
+  if (parts.length === 2) return c.s.services.find(v => v.name === parts[0] && v.ns === parts[1]);
+  return undefined;
 }
 
 /** What `curl` / `wget` print from inside a pod. */
-function fetchFrom(c: Ctx, tool: 'curl' | 'wget', target: string): { out: string[]; code: number } {
+function fetchFrom(c: Ctx, tool: 'curl' | 'wget', target: string, fromNs: string): { out: string[]; code: number } {
   const { s } = c;
   const url = target.replace(/^https?:\/\//, '');
   const host = url.split('/')[0].split(':')[0];
@@ -169,8 +175,16 @@ function fetchFrom(c: Ctx, tool: 'curl' | 'wget', target: string): { out: string
   if (host === 'localhost' || host === '127.0.0.1') {
     return fail('curl: (7) Failed to connect to localhost port 80 after 0 ms: Connection refused', "wget: can't connect to remote host (127.0.0.1): Connection refused", 1);
   }
-  const svc = hostService(c, host);
-  if (!svc) return fail('curl: (6) Could not resolve host: ' + host, 'wget: bad address \'' + host + '\'', 6);
+  const svc = hostService(c, host, fromNs);
+  if (!svc) {
+    const elsewhere = !host.includes('.') ? s.services.find(v => v.name === host) : undefined;
+    if (elsewhere) s.flags.triedBareName = true;
+    const r = fail('curl: (6) Could not resolve host: ' + host, 'wget: bad address \'' + host + '\'', 6);
+    if (elsewhere) r.out.push('hint: a bare name only resolves inside this pod\'s namespace (' + fromNs + '). Service ' + host + ' lives in ' + elsewhere.ns + ': try ' + host + '.' + elsewhere.ns);
+    return r;
+  }
+  if (svc.ns !== fromNs) s.flags.crossNsCall = true;
+  if (host.split('.').length >= 3) s.flags.fqdnCall = true;
   const port = explicitPort ? Number(explicitPort[1]) : 80;
   const eps = endpoints(s, svc).filter(p => p.phase === 'Running');
   if (port !== svc.port) return fail('curl: (7) Failed to connect to ' + host + ' port ' + port + ': Connection refused', "wget: can't connect to remote host (" + svc.ip + '): Connection refused', 1);
@@ -188,7 +202,7 @@ export function execCmd(c: Ctx): void {
   const name = pos[0];
   if (!name) { c.err('error: expected \'exec (POD | TYPE/NAME) COMMAND [ARG1] [ARG2] ... [ARGN]\'.'); return; }
   let p = c.findPod(name);
-  if (!p && name.startsWith('deployment/')) p = s.pods.find(x => x.owner === name.split('/')[1] && x.phase === 'Running');
+  if (!p && name.startsWith('deployment/')) p = s.pods.find(x => x.owner === keyOf(c.ns, name.split('/')[1]) && x.phase === 'Running');
   if (!p) { c.notFound('pod', name); return; }
   if (p.phase !== 'Running') { c.err('error: unable to upgrade connection: container not found ("' + p.name + '") - the pod is ' + p.phase); return; }
   if (!cmdArgs.length) { c.err('error: you must specify at least one command for the container (kubectl exec POD -- COMMAND)'); return; }
@@ -203,7 +217,7 @@ export function execCmd(c: Ctx): void {
       const sec = p.secret ? s.secrets.find(x => x.name === p.secret) : undefined;
       Object.entries(cm?.data ?? {}).forEach(([k, v]) => c.say(k + '=' + v));
       Object.keys(sec?.data ?? {}).forEach(k => c.say(k + '=<from secret>'));
-      s.services.forEach(v => c.say(v.name.toUpperCase().replace(/-/g, '_') + '_SERVICE_HOST=' + v.ip));
+      s.services.filter(v => v.ns === p.ns).forEach(v => c.say(v.name.toUpperCase().replace(/-/g, '_') + '_SERVICE_HOST=' + v.ip));
       break;
     }
     case 'cat': c.say(args[0] === '/etc/hostname' ? p.name : 'cat: ' + (args[0] ?? '') + ': No such file or directory'); break;
@@ -212,15 +226,15 @@ export function execCmd(c: Ctx): void {
     case 'curl': case 'wget': {
       const target = args.filter(a => !a.startsWith('-')).pop();
       if (!target) { c.err('error: ' + bin + ': no URL specified'); break; }
-      const r = fetchFrom(c, bin, target);
+      const r = fetchFrom(c, bin, target, p.ns);
       r.out.forEach(l => c.say(l, r.code ? 'err' : ''));
       break;
     }
     case 'nginx': c.say(args[0] === '-v' ? 'nginx version: nginx/1.27.4' : 'nginx: supported here: nginx -v'); break;
     case 'nslookup': {
       const host = args[0] ?? '';
-      const svc = hostService(c, host);
-      if (svc) { c.say('Name:    ' + host + '.default.svc.cluster.local'); c.say('Address: ' + svc.ip); }
+      const svc = hostService(c, host, p.ns);
+      if (svc) { c.say('Name:    ' + svc.name + '.' + svc.ns + '.svc.cluster.local'); c.say('Address: ' + svc.ip); }
       else c.say("** server can't find " + host + ': NXDOMAIN', 'err');
       break;
     }
@@ -240,9 +254,9 @@ export function portForwardCmd(c: Ctx): void {
   let pod: Pod | undefined;
   let svc: Service | undefined;
   if (['pod', 'po', 'pods'].includes(kindRaw)) pod = c.findPod(nameRaw);
-  else if (['deployment', 'deploy'].includes(kindRaw)) pod = s.pods.find(x => x.owner === nameRaw && x.phase === 'Running');
+  else if (['deployment', 'deploy'].includes(kindRaw)) pod = s.pods.find(x => x.owner === keyOf(c.ns, nameRaw) && x.phase === 'Running');
   else if (['service', 'svc'].includes(kindRaw)) {
-    svc = s.services.find(v => v.name === nameRaw);
+    svc = s.services.find(v => v.name === nameRaw && v.ns === c.ns);
     pod = svc ? endpoints(s, svc).find(x => x.phase === 'Running') : undefined;
   } else { c.err('error: unsupported resource type "' + kindRaw + '"'); return; }
   if (!pod && !svc) { c.notFound(kindRaw, nameRaw); return; }

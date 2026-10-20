@@ -58,7 +58,7 @@ describe('namespaces and system pods', () => {
     expect(cmd(s, 'kubectl create namespace dev')).toMatch(/AlreadyExists/);
     expect(cmd(s, 'kubectl create ns Bad_Name')).toMatch(/invalid/);
     expect(cmd(s, 'kubectl get pods -n dev')).toBe('No resources found in dev namespace.');
-    expect(cmd(s, 'kubectl run x --image=nginx -n dev')).toMatch(/default namespace only/);
+    expect(cmd(s, 'kubectl run x --image=nginx -n dev')).toBe('pod/x created');
     expect(cmd(s, 'kubectl delete namespace kube-system')).toMatch(/may not be deleted/);
     cmdOk(s, 'kubectl delete namespace dev');
     expect(cmd(s, 'kubectl get ns')).not.toContain('dev');

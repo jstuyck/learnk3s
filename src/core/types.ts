@@ -32,6 +32,8 @@ export type Labels = Record<string, string>;
 export interface Pod {
   id: number;
   name: string;
+  /** namespace (default unless created elsewhere) */
+  ns: string;
   /** value of the "app" label (kept in sync with labels.app) */
   app: string;
   labels: Labels;
@@ -94,6 +96,11 @@ export interface RevisionEntry {
 
 export interface Deployment {
   name: string;
+  ns: string;
+  /** identity used by pods (owner) and the sim: the name in default, ns/name elsewhere */
+  key: string;
+  /** why the Deployment cannot create pods right now (quota) */
+  blocked?: string;
   app: string;
   image: string;
   config: string | null;
@@ -112,6 +119,7 @@ export interface Deployment {
 
 export interface Service {
   name: string;
+  ns: string;
   selector: Labels;
   port: number;
   targetPort: number;
@@ -150,6 +158,14 @@ export interface CronJob {
   nextRun: number;
   lastSchedule: number | null;
   counter: number;
+}
+
+export interface Quota {
+  name: string;
+  ns: string;
+  /** maximum number of pods in the namespace */
+  pods: number;
+  createdAt: number;
 }
 
 export interface Hpa {
@@ -299,6 +315,21 @@ export interface Flags {
   rolloutWhilePaused?: boolean;
   ranKubectl?: boolean;
   listedNodes?: boolean;
+  listedKubeSystem?: boolean;
+  openedNamespaceView?: boolean;
+  fqdnCall?: boolean;
+  describedBlocked?: boolean;
+  triedDeleteSystem?: boolean;
+  deletedDeployment?: string;
+  deletedNamespace?: boolean;
+  createdQuota?: boolean;
+  switchedNamespace?: string;
+  triedBareName?: boolean;
+  crossNsCall?: boolean;
+  describedQuota?: boolean;
+  viewedContext?: boolean;
+  usedWideSystem?: boolean;
+  listedKubeDns?: boolean;
   inspectedCert?: boolean;
   usedEtcdctl?: boolean;
   curledApi?: boolean;
@@ -345,6 +376,9 @@ export interface State {
   hpas: Hpa[];
   jobs: Job[];
   cronjobs: CronJob[];
+  quotas: Quota[];
+  /** the namespace commands use when no -n is given (kubectl config set-context --current --namespace) */
+  ctxNs: string;
   /** namespaces created by the player (besides default and the system ones) */
   namespaces?: string[];
   /** Kubernetes the Hard Way: the machines, files and services of the hand-built cluster */

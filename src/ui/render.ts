@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 import { CREATE_TIME, T_POD, T_SVC, endpoints, readyCount, trafficRate, usedSlots } from '../core/sim';
 import { apiserverUp, unitActive } from '../core/hardway';
+import { BASE_NAMESPACES, namespaces, systemPods } from '../core/system';
 import type { Machine } from '../core/hardway';
 import type { ClusterNode, Pod, Request, Service, State } from '../core/types';
 
@@ -64,13 +65,16 @@ function txt(c: Ctx, t: string, x: number, y: number, o: TxtOpts = {}): void {
 }
 const clip = (t: string, n: number): string => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 
-export function draw(c: Ctx, s: State, selectedId: number | null): void {
+export type View = 'cluster' | 'namespaces';
+
+export function draw(c: Ctx, s: State, selectedId: number | null, view: View = 'cluster'): void {
   c.clearRect(0, 0, VW, VH);
   c.fillStyle = '#0b1226'; c.fillRect(0, 0, VW, VH);
   c.strokeStyle = 'rgba(80,110,190,.07)'; c.lineWidth = 1;
   for (let x = 0; x < VW; x += 32) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, VH); c.stroke(); }
   for (let y = 0; y < VH; y += 32) { c.beginPath(); c.moveTo(0, y); c.lineTo(VW, y); c.stroke(); }
   if (s.level.hardway === 'machines' && s.hw) { drawHardWay(c, s); return; }
+  if (view === 'namespaces') { drawNamespaces(c, s); return; }
 
   drawControlPlane(c, s);
   drawUsers(c, s);
@@ -197,6 +201,7 @@ function drawPod(c: Ctx, s: State, p: Pod, selectedId: number | null): void {
   const lim = Math.max(8, Math.floor(r.w / 7));
   txt(c, clip(p.name, lim), r.x + 8, r.y + 17, { size: 11, bold: true });
   txt(c, clip(p.image, lim + 2), r.x + 8, r.y + 31, { size: 10, color: '#8da0c8', mono: true });
+  if (p.ns !== 'default') txt(c, clip(p.ns, 11), r.x + r.w - 6, r.y + r.h - 20, { size: 9, bold: true, align: 'right', color: '#c9a8ff' });
   let label: string = p.phase === 'ContainerCreating' ? 'Creating…' : p.phase;
   if (p.phase === 'CrashLoopBackOff' && p.restarts) label += ' ↺' + p.restarts;
   txt(c, clip(label, lim + 4), r.x + 8, r.y + 46, { size: 10, bold: true, color: col });
@@ -381,4 +386,55 @@ function drawHardWay(c: Ctx, s: State): void {
     }
   });
   txt(c, apiserverUp(hw) ? 'API server is answering on server.kubernetes.local:6443' : unitActive(hw, 'server', 'etcd') ? 'etcd is up; the control plane is not' : 'No cluster yet', VW / 2, VH - 6, { size: 11, align: 'center', color: apiserverUp(hw) ? '#3ddc84' : '#8da0c8' });
+}
+
+// ---- Namespaces view -------------------------------------------------------------------------------------------------------
+interface NsCard { name: string; rect: Rect }
+
+function nsLayout(s: State): NsCard[] {
+  const names = namespaces(s);
+  const cols = 4, gap = 10, top = 34;
+  const rows = Math.max(2, Math.ceil(names.length / cols));
+  const w = (VW - 24 - gap * (cols - 1)) / cols, h = (VH - top - 12 - gap * (rows - 1)) / rows;
+  return names.map((name, i) => ({ name, rect: { x: 12 + (i % cols) * (w + gap), y: top + Math.floor(i / cols) * (h + gap), w, h } }));
+}
+
+/** Which namespace card is at this point of the canvas (for clicks in the Namespaces view). */
+export function nsAt(s: State, x: number, y: number): string | null {
+  const hit = nsLayout(s).find(({ rect: r }) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+  return hit ? hit.name : null;
+}
+
+function drawNamespaces(c: Ctx, s: State): void {
+  txt(c, 'Namespaces', 14, 22, { size: 14, bold: true, color: '#b9ccff' });
+  txt(c, 'click one to list its pods', 110, 22, { size: 11, color: '#8da0c8' });
+  txt(c, 'context namespace: ' + (s.ctxNs ?? 'default'), VW - 14, 22, { size: 11, align: 'right', color: '#f5c542', mono: true });
+  const sys = systemPods(s);
+  for (const { name, rect: r } of nsLayout(s)) {
+    const isCtx = (s.ctxNs ?? 'default') === name;
+    const system = BASE_NAMESPACES.includes(name) && name !== 'default';
+    rr(c, r.x, r.y, r.w, r.h, 12);
+    c.fillStyle = name === 'kube-system' ? '#161d3d' : '#101a36'; c.fill();
+    c.strokeStyle = isCtx ? '#f5c542' : system ? '#3b4a86' : '#2c3f72'; c.lineWidth = isCtx ? 2.5 : 1.5; c.stroke();
+    txt(c, clip(name, 17), r.x + 12, r.y + 21, { size: 14, bold: true, color: system ? '#b9ccff' : '#ffffff' });
+    const tag = isCtx ? 'context' : system ? 'system' : name === 'default' ? 'default' : '';
+    if (tag) txt(c, tag, r.x + r.w - 10, r.y + 20, { size: 9, bold: true, align: 'right', color: isCtx ? '#f5c542' : '#8da0c8' });
+    const pods = name === 'kube-system'
+      ? sys.map(p => ({ name: p.name, node: p.node, color: p.status === 'Running' ? '#3ddc84' : '#b48cff' }))
+      : s.pods.filter(p => p.ns === name && p.phase !== 'Terminating').map(p => ({ name: p.name, node: p.node ?? 'pending', color: PHASE_COLORS[p.phase] ?? '#8da0c8' }));
+    const deps = s.deployments.filter(d => d.ns === name).length, svcs = s.services.filter(v => v.ns === name).length;
+    const quota = s.quotas.find(q => q.ns === name);
+    txt(c, pods.length + ' pods · ' + (name === 'kube-system' ? '1 Deployment · 2 DaemonSets · 1 Service' : deps + ' Deployments · ' + svcs + ' Services'), r.x + 12, r.y + 38, { size: 10, color: '#8da0c8' });
+    if (quota) txt(c, 'quota: ' + pods.length + '/' + quota.pods + ' pods', r.x + 12, r.y + 51, { size: 10, color: pods.length >= quota.pods ? '#ff8b8b' : '#9fb6ee', mono: true });
+    const top = r.y + (quota ? 66 : 54), rowH = 14;
+    const room = Math.max(0, Math.floor((r.y + r.h - top - 6) / rowH));
+    if (!pods.length) txt(c, 'empty', r.x + 12, top + 10, { size: 11, color: '#586a99' });
+    pods.sort((a, b) => a.name.localeCompare(b.name)).slice(0, pods.length > room ? room - 1 : room).forEach((p, i) => {
+      const y = top + i * rowH;
+      c.beginPath(); c.arc(r.x + 17, y + 6, 3.5, 0, 7); c.fillStyle = p.color; c.fill();
+      txt(c, clip(p.name, Math.floor((r.w - 80) / 6.2)), r.x + 26, y + 10, { size: 10, mono: true, color: '#d9e4ff' });
+      txt(c, clip(p.node, 8), r.x + r.w - 10, y + 10, { size: 9, align: 'right', color: '#8da0c8', mono: true });
+    });
+    if (pods.length > room && room > 0) txt(c, '+' + (pods.length - room + 1) + ' more', r.x + 26, top + (room - 1) * rowH + 10, { size: 10, color: '#8da0c8' });
+  }
 }

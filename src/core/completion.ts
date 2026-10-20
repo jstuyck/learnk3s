@@ -44,13 +44,16 @@ export function completeLine(s: State, line: string): Completion {
   if (s.hw && prev[0] !== 'kubectl') return completeHw(s, prev, cur, start);
   if (!prev.length) return res(pick(['kubectl', 'k', 'cloud', 'help', 'clear']));
 
+  const nsTok = prev.findIndex(x => x === '-n' || x === '--namespace');
+  const curNs = (nsTok >= 0 ? prev[nsTok + 1] : prev.find(x => x.startsWith('--namespace='))?.slice(12)) ?? s.ctxNs ?? 'default';
   const names = {
-    endpoints: s.services.map(v => v.name),
+    quota: s.quotas.filter(q => q.ns === curNs).map(q => q.name),
+    endpoints: s.services.filter(v => v.ns === curNs).map(v => v.name),
     job: s.jobs.map(j => j.name),
     cronjob: s.cronjobs.map(c => c.name),
-    pod: s.pods.filter(p => p.phase !== 'Terminating').map(p => p.name),
-    deployment: s.deployments.map(d => d.name),
-    service: s.services.map(v => v.name),
+    pod: s.pods.filter(p => p.ns === curNs && p.phase !== 'Terminating').map(p => p.name),
+    deployment: s.deployments.filter(d => d.ns === curNs).map(d => d.name),
+    service: s.services.filter(v => v.ns === curNs).map(v => v.name),
     configmap: s.configmaps.map(c => c.name),
     secret: s.secrets.map(c => c.name),
     hpa: s.hpas.map(h => h.dep),

@@ -3,7 +3,7 @@
 import type { Ctx } from './ctx';
 import { KIND, strFlag } from './ctx';
 import { ageStr, depRows, matchesSelector, nodeRows, podIp, podRows, svcRows, topNodeRows, topRows } from './format';
-import { ownedPods, readyCount, terminate, tplOf } from './sim';
+import { keyOf, ownedPods, readyCount, terminate, tplOf } from './sim';
 import { logsOfJob } from './cmd-batch';
 import { systemPodCmd } from './system';
 import type { ClusterNode, Deployment, Line, Pod, Service, State } from './types';
@@ -30,8 +30,8 @@ function podDoc(s: State, p: Pod): Doc {
   return {
     apiVersion: 'v1', kind: 'Pod',
     metadata: pruneEmpty({
-      name: p.name, namespace: 'default', labels: p.labels, creationTimestamp: stamp(s.t - p.age),
-      ownerReferences: p.owner ? [{ kind: p.owner.startsWith('job/') ? 'Job' : 'ReplicaSet', name: p.owner.replace(/^job\//, '') }] : undefined,
+      name: p.name, namespace: p.ns, labels: p.labels, creationTimestamp: stamp(s.t - p.age),
+      ownerReferences: p.owner ? [{ kind: p.owner.startsWith('job/') ? 'Job' : 'ReplicaSet', name: p.owner.replace(/^.*\//, '') }] : undefined,
     }),
     spec: pruneEmpty({
       nodeName: p.node ?? p.ranOn ?? undefined,
@@ -63,19 +63,19 @@ function nodeDoc(s: State, n: ClusterNode): Doc {
 function deploymentDoc(s: State, d: Deployment): Doc {
   return {
     apiVersion: 'apps/v1', kind: 'Deployment',
-    metadata: { name: d.name, namespace: 'default', labels: { app: d.app }, creationTimestamp: stamp(d.createdAt) },
+    metadata: { name: d.name, namespace: d.ns, labels: { app: d.app }, creationTimestamp: stamp(d.createdAt) },
     spec: {
       replicas: d.replicas, selector: { matchLabels: { app: d.app } },
       template: { metadata: { labels: { app: d.app } }, spec: { containers: [{ name: d.name, image: d.image, resources: { requests: { cpu: d.res.cpu + 'm' }, limits: d.res.mem === null ? {} : { memory: d.res.mem + 'Mi' } } }] } },
     },
-    status: { replicas: ownedPods(s, d.name).length, readyReplicas: readyCount(s, d.name), updatedReplicas: ownedPods(s, d.name).filter(p => p.tpl === tplOf(d)).length },
+    status: { replicas: ownedPods(s, d.key).length, readyReplicas: readyCount(s, d.key), updatedReplicas: ownedPods(s, d.key).filter(p => p.tpl === tplOf(d)).length },
   };
 }
 
 function serviceDoc(_s: State, v: Service): Doc {
   return {
     apiVersion: 'v1', kind: 'Service',
-    metadata: { name: v.name, namespace: 'default', creationTimestamp: stamp(v.createdAt) },
+    metadata: { name: v.name, namespace: v.ns, creationTimestamp: stamp(v.createdAt) },
     spec: { type: v.nodePort ? 'NodePort' : 'ClusterIP', clusterIP: v.ip, selector: v.selector, ports: [pruneEmpty({ port: v.port, targetPort: v.targetPort, nodePort: v.nodePort, protocol: 'TCP' })] },
     status: { loadBalancer: {} },
   };
@@ -252,13 +252,13 @@ export function getStructured(c: Ctx, kind: string): boolean {
 
   let items: unknown[];
   if (k === 'pod') {
-    let pods = s.pods.filter(p => matchesSelector(p, selector));
+    let pods = s.pods.filter(p => p.ns === c.ns && matchesSelector(p, selector));
     if (name) pods = pods.filter(p => p.name === name);
     if (fieldSel) { const f = fieldSelect(c, pods, fieldSel); if (!f) return true; pods = f; s.flags.usedFieldSelector = true; }
     items = pods;
-  } else if (k === 'deployment') items = s.deployments.filter(d => !name || d.name === name);
+  } else if (k === 'deployment') items = s.deployments.filter(d => d.ns === c.ns && (!name || d.name === name));
   else if (k === 'node') items = s.nodes.filter(n => !name || n.name === name);
-  else items = s.services.filter(v => !name || v.name === name);
+  else items = s.services.filter(v => v.ns === c.ns && (!name || v.name === name));
   const docOf = (x: unknown): Doc => k === 'pod' ? podDoc(s, x as Pod) : k === 'deployment' ? deploymentDoc(s, x as Deployment) : k === 'node' ? nodeDoc(s, x as ClusterNode) : serviceDoc(s, x as Service);
 
   if (name && !items.length) { c.notFound(k, name); return true; }
@@ -333,7 +333,7 @@ export function deleteBulk(c: Ctx): boolean {
     targets = [];
     for (const n of names) { const p = c.findPod(n); if (!p || p.phase === 'Terminating') { c.notFound('pod', n); return true; } targets.push(p); }
   } else {
-    targets = s.pods.filter(p => p.phase !== 'Terminating' && matchesSelector(p, selector));
+    targets = s.pods.filter(p => p.ns === c.ns && p.phase !== 'Terminating' && matchesSelector(p, selector));
     if (fieldSel) { const f = fieldSelect(c, targets, fieldSel); if (!f) return true; targets = f; }
   }
   if (!targets.length) { c.say('No resources found', 'dim'); return true; }
@@ -384,11 +384,11 @@ export function eventsCmd(c: Ctx): void {
   const types = strFlag(flags.types)?.split(',').map(x => x.trim().toLowerCase());
   if (types && types.some(t => t !== 'normal' && t !== 'warning')) { c.err('error: --types must be Normal and/or Warning'); return; }
   const forArg = strFlag(flags.for) ?? (pos[0]?.includes('/') ? pos[0] : undefined);
-  let pods = s.pods;
+  let pods = s.pods.filter(p => p.ns === c.ns);
   if (forArg) {
     const [kindW, nameW] = forArg.includes('/') ? forArg.split('/') : ['pod', forArg];
-    if (KIND[kindW] === 'pod') pods = s.pods.filter(p => p.name === nameW);
-    else if (KIND[kindW] === 'deployment') pods = s.pods.filter(p => p.owner === nameW);
+    if (KIND[kindW] === 'pod') pods = s.pods.filter(p => p.name === nameW && p.ns === c.ns);
+    else if (KIND[kindW] === 'deployment') pods = s.pods.filter(p => p.owner === keyOf(c.ns, nameW));
     else { c.err('error: --for supports pod/NAME and deployment/NAME in this simulator'); return; }
     if (!pods.length) { c.notFound(KIND[kindW] ?? kindW, nameW); return; }
   }
@@ -424,17 +424,18 @@ export function logsCmd(c: Ctx): void {
 
   let pods: Pod[];
   if (selector) {
-    pods = s.pods.filter(p => p.phase !== 'Terminating' && matchesSelector(p, selector));
-    if (!pods.length) { c.say('No resources found in default namespace.', 'dim'); return; }
+    pods = s.pods.filter(p => p.ns === c.ns && p.phase !== 'Terminating' && matchesSelector(p, selector));
+    if (!pods.length) { c.say('No resources found in ' + c.ns + ' namespace.', 'dim'); return; }
     s.flags.usedLogsSelector = true;
   } else if (target && /^(deploy|deployment)\//.test(target)) {
     const dn = target.split('/')[1];
-    if (!c.getDep(dn)) return;
-    pods = ownedPods(s, dn);
+    const dep = c.getDep(dn);
+    if (!dep) return;
+    pods = ownedPods(s, dep.key);
     if (!pods.length) { c.err('error: deployment "' + dn + '" has no pods'); return; }
     // like kubectl, logs of a Deployment come from one of its pods: prefer one that is in trouble
     pods = [pods.find(isCrashed) ?? pods[0]];
-    c.say('Found ' + ownedPods(s, dn).length + ' pods, using pod/' + pods[0].name, 'dim');
+    c.say('Found ' + ownedPods(s, dep.key).length + ' pods, using pod/' + pods[0].name, 'dim');
   } else {
     const p = target ? c.findPod(target) : undefined;
     if (!p) { if (target) c.notFound('pod', target); else c.err('usage: kubectl logs POD | deployment/NAME | -l selector'); return; }
@@ -467,7 +468,7 @@ export function topCmd(c: Ctx): void {
     return;
   }
   if (what !== 'pod') { c.err('error: You must specify the type of resource to get. Valid resource types include pods, nodes'); return; }
-  const rows = topRows(s, sortBy as 'cpu' | 'memory' | undefined);
+  const rows = topRows(s, sortBy as 'cpu' | 'memory' | undefined, c.ns);
   if (sortBy) s.flags.usedTopSort = true;
   if (rows.length === 1) c.say('No resources found in default namespace.', 'dim'); else c.emit(rows);
 }

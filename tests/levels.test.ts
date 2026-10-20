@@ -11,13 +11,14 @@ describe('campaign data', () => {
   });
 
   it('has the expected campaigns', () => {
-    expect(CAMPAIGNS.map(c => c.id)).toEqual(['rookie', 'practitioner', 'elite', 'hardway', 'profit']);
-    expect(CAMPAIGNS.map(c => c.mode)).toEqual(['campaign', 'campaign', 'campaign', 'campaign', 'profit']);
+    expect(CAMPAIGNS.map(c => c.id)).toEqual(['rookie', 'practitioner', 'namespaces', 'elite', 'hardway', 'profit']);
+    expect(CAMPAIGNS.map(c => c.mode)).toEqual(['campaign', 'campaign', 'campaign', 'campaign', 'campaign', 'profit']);
     expect(CAMPAIGNS[0].levels).toHaveLength(8);
     expect(CAMPAIGNS[1].levels).toHaveLength(6);
     expect(CAMPAIGNS[2].levels).toHaveLength(6);
-    expect(CAMPAIGNS[3].levels).toHaveLength(12);
-    expect(CAMPAIGNS[4].levels).toHaveLength(6);
+    expect(CAMPAIGNS[3].levels).toHaveLength(6);
+    expect(CAMPAIGNS[4].levels).toHaveLength(12);
+    expect(CAMPAIGNS[5].levels).toHaveLength(6);
   });
 
   describe.each(ALL_LEVELS.map(l => [l.id, l] as const))('%s', (_id, L) => {
@@ -73,7 +74,7 @@ describe('campaign data', () => {
     expect(CAMPAIGNS[0].levels.some(l => l.econ)).toBe(false);
     expect(CAMPAIGNS[1].levels.some(l => l.econ)).toBe(false);
     expect(CAMPAIGNS[2].levels.some(l => l.econ)).toBe(false);
-    expect(CAMPAIGNS[3].levels.some(l => l.econ)).toBe(false);
-    expect(CAMPAIGNS[4].levels.every(l => l.econ)).toBe(true);
+    for (const c of CAMPAIGNS.slice(2, 5)) expect(c.levels.some(l => l.econ)).toBe(false);
+    expect(CAMPAIGNS[5].levels.every(l => l.econ)).toBe(true);
   });
 });

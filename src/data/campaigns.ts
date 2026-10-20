@@ -1,5 +1,6 @@
 import type { Campaign } from '../core/types';
 import { ELITE_LEVELS } from './levels-elite';
+import { NAMESPACE_LEVELS } from './levels-namespaces';
 import { HARDWAY_LEVELS } from './levels-hardway';
 import { PRACTITIONER_LEVELS } from './levels-practitioner';
 import { PROFIT_LEVELS } from './levels-profit';
@@ -8,6 +9,7 @@ import { ROOKIE_LEVELS } from './levels-rookie';
 export const CAMPAIGNS: Campaign[] = [
   { id: 'rookie', name: 'Rookie', sub: 'Learn the basics', mode: 'campaign', levels: ROOKIE_LEVELS },
   { id: 'practitioner', name: 'Practitioner', sub: 'Jobs, labels, limits, debugging', mode: 'campaign', levels: PRACTITIONER_LEVELS },
+  { id: 'namespaces', name: 'Namespaces', sub: 'Rooms in a cluster: kube-system, quotas, DNS', mode: 'campaign', levels: NAMESPACE_LEVELS },
   { id: 'elite', name: 'Elite', sub: 'Advanced kubectl: queries, bulk ops, forensics', mode: 'campaign', levels: ELITE_LEVELS },
   { id: 'hardway', name: 'The Hard Way', sub: 'Guided tutorial: build a cluster by hand, step by step', mode: 'campaign', levels: HARDWAY_LEVELS },
   { id: 'profit', name: 'Profit Mode', sub: 'Run the cluster for money', mode: 'profit', levels: PROFIT_LEVELS },

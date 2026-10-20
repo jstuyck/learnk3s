@@ -2,7 +2,7 @@
 import type { Deployment, Pod, State } from './types';
 
 export type Kind =
-  | 'pod' | 'deployment' | 'service' | 'node' | 'configmap' | 'secret' | 'hpa' | 'endpoints' | 'job' | 'cronjob' | 'namespace' | 'daemonset' | 'all';
+  | 'pod' | 'deployment' | 'service' | 'node' | 'configmap' | 'secret' | 'hpa' | 'endpoints' | 'job' | 'cronjob' | 'namespace' | 'daemonset' | 'quota' | 'all';
 
 export const KIND: Record<string, Kind> = {
   po: 'pod', pod: 'pod', pods: 'pod',
@@ -17,6 +17,7 @@ export const KIND: Record<string, Kind> = {
   cj: 'cronjob', cronjob: 'cronjob', cronjobs: 'cronjob',
   ns: 'namespace', namespace: 'namespace', namespaces: 'namespace',
   ds: 'daemonset', daemonset: 'daemonset', daemonsets: 'daemonset',
+  rq: 'quota', quota: 'quota', quotas: 'quota', resourcequota: 'quota', resourcequotas: 'quota',
   all: 'all',
 };
 
@@ -101,6 +102,8 @@ export interface Out {
 export interface Ctx extends Out {
   s: State;
   verb: string;
+  /** the namespace this command works in (-n, or the context's default) */
+  ns: string;
   pos: string[];
   flags: Record<string, FlagValue>;
   all: Record<string, FlagValue[]>;

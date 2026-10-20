@@ -10,10 +10,10 @@ import type { Ctx, FlagValue, Out } from './ctx';
 import { KIND, NONE, parseArgs, parseLabels, resRef, splitWords, strFlag } from './ctx';
 import { burnRate, profit, revenueRate } from './economy';
 import { runHw } from './hwshell';
-import { getNamespaced, namespaceCmd, namespaces, NS_NOTE, systemPodCmd } from './system';
+import { configCmd, describeQuota, getNamespaced, namespaceCmd, namespaces, NS_LIMIT, NS_SYSTEM, quotaCmd, systemPodCmd } from './system';
 import { ageStr, depRows, endpointRows, labelText, nodeRows, podRows, podStatus, svcRows, table } from './format';
 import {
-  addDeployment, addService, depOf, endpoints, makeNode, makePod, NODE_CPU, ownedPods, planCommand, readyCount, recordRevision, terminate, tplOf,
+  addDeployment, addService, depOf, endpoints, keyOf, makeNode, makePod, NODE_CPU, ownedPods, planCommand, readyCount, recordRevision, terminate, tplOf,
 } from './sim';
 import type { Line, Pod, State } from './types';
 
@@ -101,7 +101,7 @@ export const REAL_COMMANDS: string[] = KUBECTL_HELP
 export const SUPPORTED = [
   'create', 'expose', 'run', 'set', 'get', 'delete', 'rollout', 'scale', 'autoscale', 'cluster-info', 'top',
   'cordon', 'uncordon', 'drain', 'describe', 'logs', 'events', 'completion', 'version',
-  'label', 'patch', 'exec', 'port-forward',
+  'label', 'patch', 'exec', 'port-forward', 'config',
 ];
 
 /** Usage lines for `kubectl <command> --help` (the subset of flags the simulator understands). */
@@ -136,6 +136,7 @@ export const USAGE: Record<string, string[]> = {
   cordon: ['Mark node as unschedulable.', '', 'Usage:', '  kubectl cordon NODE'],
   uncordon: ['Mark node as schedulable.', '', 'Usage:', '  kubectl uncordon NODE'],
   drain: ['Drain node in preparation for maintenance.', '', 'Usage:', '  kubectl drain NODE [--ignore-daemonsets]'],
+  config: ['Modify kubeconfig files.', '', 'Usage:', '  kubectl config set-context --current --namespace=NAMESPACE', '  kubectl config get-contexts', '  kubectl config current-context', '  kubectl config view --minify', '', 'The namespace of the current context is used by every command that has no -n flag.'],
   describe: ['Show details of a specific resource or group of resources.', '', 'Usage:', '  kubectl describe (TYPE NAME)', '', 'Examples:', '  kubectl describe pod web-abc12'],
   logs: ['Print the logs for a container in a pod.', '', 'Usage:', '  kubectl logs POD [--previous] [--tail=N]', '  kubectl logs deployment/NAME', '  kubectl logs -l app=web --tail=5', '  kubectl logs job/NAME'],
   events: ['Display events.', '', 'Usage:', '  kubectl events [--types=Warning] [--for=pod/NAME]'],
@@ -203,12 +204,14 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
     }
     return n;
   };
+  const allNs = !!flags['all-namespaces'];
+  const curNs = strFlag(flags.namespace) ?? s.ctxNs ?? 'default';
   const getDep = (name: string) => {
-    const d = depOf(s, name);
+    const d = depOf(s, keyOf(curNs, name));
     if (!d) notFound('deployment', name);
     return d;
   };
-  const findPod = (name: string): Pod | undefined => s.pods.find(p => p.name === name);
+  const findPod = (name: string): Pod | undefined => s.pods.find(p => p.name === name && p.ns === curNs);
   const literals = (): Record<string, string> | null => {
     const lits = (all['from-literal'] || []).filter((x): x is string => typeof x === 'string');
     if (!lits.length) { err('error: at least one --from-literal=KEY=VALUE is required'); return null; }
@@ -223,7 +226,7 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
   const crashed = (p: Pod) => p.phase === 'CrashLoopBackOff' || p.phase === 'ImagePullBackOff' || p.phase === 'Error';
   const wide = flags.output === 'wide';
   const selector = strFlag(flags.selector);
-  const c: Ctx = { ...out, s, verb, pos, flags, all, cmdArgs, notFound, needNum, getDep, findPod };
+  const c: Ctx = { ...out, s, verb, ns: curNs, pos, flags, all, cmdArgs, notFound, needNum, getDep, findPod };
 
   if (flags.help) { (USAGE[verb] ?? ['No help available for "' + verb + '" in this simulator.']).forEach(l => say(l)); return; }
   if (!SUPPORTED.includes(verb)) {
@@ -237,21 +240,25 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
     return;
   }
 
-  const ns = strFlag(flags.namespace);
   const nsKind = KIND[pos[0]];
-  const touchesOtherNs = !!ns && ns !== 'default';
-  if (touchesOtherNs && ['create', 'run', 'scale', 'expose', 'autoscale', 'set', 'rollout', 'label', 'patch', 'exec', 'port-forward', 'cordon', 'uncordon', 'drain', 'delete'].includes(verb)
-    && !(verb === 'create' && nsKind === 'namespace') && !(verb === 'delete' && nsKind === 'namespace')) {
-    err(NS_NOTE);
+  const namespaced = ['get', 'describe', 'logs', 'create', 'run', 'scale', 'expose', 'autoscale', 'set', 'rollout', 'label', 'patch', 'exec', 'port-forward', 'delete', 'events', 'top'];
+  const mutating = ['create', 'run', 'scale', 'expose', 'autoscale', 'set', 'rollout', 'label', 'patch', 'exec', 'port-forward', 'delete'];
+  const nsObject = nsKind === 'namespace';
+  if (namespaced.includes(verb) && !allNs && !namespaces(s).includes(curNs)) {
+    err('Error from server (NotFound): namespaces "' + curNs + '" not found' + (curNs === s.ctxNs ? '   (the current context points at it: kubectl config set-context --current --namespace=default)' : ''));
     return;
   }
+  if (mutating.includes(verb) && curNs === 'kube-system' && !nsObject) { err(NS_SYSTEM); return; }
+  if (curNs !== 'default' && !nsObject && (verb === 'autoscale'
+    || ((verb === 'create' || verb === 'delete') && ['job', 'cronjob', 'configmap', 'secret', 'hpa'].includes(nsKind ?? ''))
+    || (verb === 'patch' && nsKind === 'cronjob'))) { err(NS_LIMIT); return; }
 
   switch (verb) {
     case 'get': {
       const kind = pos[0] ? KIND[pos[0]] : undefined;
       if (!kind) { err('error: the server doesn\'t have a resource type "' + (pos[0] || '') + '"  (try pods, deployments, services, nodes)'); break; }
+      if (!allNs && curNs !== 'kube-system' && getStructured(c, kind)) break;
       if (getNamespaced(c, kind)) break;
-      if (getStructured(c, kind)) break;
       if (kind === 'pod' || kind === 'all') {
         s.flags.usedGet = true;
         const rows = podRows(s, wide, selector, !!flags['show-labels']);
@@ -309,7 +316,7 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       const never = strFlag(flags.restart) === 'Never' || strFlag(flags.restart) === 'OnFailure';
       const plan = cmdArgs.length ? planCommand(cmdArgs, name) : null;
       makePod(s, {
-        name, app: labels.app ?? name, labels, image, tpl: image + '|||100||0', command: cmdArgs,
+        name, ns: curNs, app: labels.app ?? name, labels, image, tpl: image + '|||100||0', command: cmdArgs,
         runFor: never && plan ? plan.runFor : undefined, willFail: never && plan ? plan.fail : undefined,
       });
       s.cpPulse = 1;
@@ -322,14 +329,16 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       const name = pos[1];
       if (kind === 'namespace') {
         namespaceCmd(c, 'create', name);
+      } else if (kind === 'quota') {
+        quotaCmd(c, 'create', name);
       } else if (kind === 'deployment') {
         const image = strFlag(flags.image);
         if (!name) { err('error: NAME is required'); break; }
         if (!image) { err('error: required flag --image not set'); break; }
-        if (depOf(s, name)) { err('Error from server (AlreadyExists): deployments.apps "' + name + '" already exists'); break; }
+        if (depOf(s, keyOf(curNs, name))) { err('Error from server (AlreadyExists): deployments.apps "' + name + '" already exists'); break; }
         const n = flags.replicas === undefined ? 1 : needNum(flags.replicas, 0, 12, 'replicas');
         if (n === null) break;
-        addDeployment(s, { name, image, replicas: n });
+        addDeployment(s, { name, image, replicas: n, ns: curNs });
         s.cpPulse = 1;
         ok('deployment.apps/' + name + ' created');
         if (s.level.id === 'pods') say('tip: a Deployment creates and manages pods for you. Delete one of its pods and see what happens!', 'dim');
@@ -377,10 +386,10 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       if (r.kind === 'deployment') { const d = getDep(r.name); if (!d) break; selectorLabels = { app: d.app }; }
       else { const p = findPod(r.name); if (!p) { notFound('pod', r.name); break; } selectorLabels = { ...p.labels }; }   // a pod's whole label set
       const name = strFlag(flags.name) ?? r.name;
-      if (s.services.some(v => v.name === name)) { err('Error from server (AlreadyExists): services "' + name + '" already exists'); break; }
+      if (s.services.some(v => v.name === name && v.ns === curNs)) { err('Error from server (AlreadyExists): services "' + name + '" already exists'); break; }
       const port = flags.port === undefined ? 80 : needNum(flags.port, 1, 65535, 'port'); if (port === null) break;
       const targetPort = flags['target-port'] === undefined ? port : needNum(flags['target-port'], 1, 65535, 'target-port'); if (targetPort === null) break;
-      const created = addService(s, name, selectorLabels, port, targetPort);
+      const created = addService(s, name, selectorLabels, port, targetPort, curNs);
       if (strFlag(flags.type) === 'NodePort') created.nodePort = 30000 + Math.floor(s.rng() * 2767);
       else if (strFlag(flags.type) && strFlag(flags.type) !== 'ClusterIP') { err('error: --type must be ClusterIP or NodePort in this simulator'); s.services = s.services.filter(v => v !== created); break; }
       ok('service/' + name + ' exposed');
@@ -444,7 +453,7 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       if (rolloutRevisions(c, sub, d)) break;
       if (sub === 'status') {
         if (d.frozen) { say('deployment "' + d.name + '" is paused. Resume it with: kubectl rollout resume deployment/' + d.name); break; }
-        const own = ownedPods(s, d.name);
+        const own = ownedPods(s, d.key);
         const updated = own.filter(p => p.tpl === tplOf(d));
         const ready = updated.filter(p => p.phase === 'Running').length;
         if (updated.length >= d.replicas && ready >= d.replicas && own.length === d.replicas) ok('deployment "' + d.name + '" successfully rolled out');
@@ -477,6 +486,8 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       const name = r.name;
       if (r.kind === 'namespace') {
         namespaceCmd(c, 'delete', name);
+      } else if (r.kind === 'quota') {
+        quotaCmd(c, 'delete', name);
       } else if (r.kind === 'pod') {
         const p = findPod(name);
         if (!p || p.phase === 'Terminating') { notFound('pod', name); break; }
@@ -486,11 +497,12 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
         if (!p.owner) say('tip: nothing manages this pod, so it will not come back.', 'dim');
         else say('tip: it is owned by Deployment/' + p.owner + ' - watch a replacement appear.', 'dim');
       } else if (r.kind === 'deployment') {
-        const d = depOf(s, name);
+        const d = depOf(s, keyOf(curNs, name));
         if (!d) { notFound('deployment', name); break; }
         s.deployments = s.deployments.filter(x => x !== d);
-        s.hpas = s.hpas.filter(h => h.dep !== d.name);
-        s.pods.filter(p => p.owner === d.name).forEach(p => terminate(s, p));
+        s.hpas = s.hpas.filter(h => h.dep !== d.key);
+        s.pods.filter(p => p.owner === d.key).forEach(p => terminate(s, p));
+        s.flags.deletedDeployment = d.key;
         ok('deployment.apps "' + d.name + '" deleted');
       } else if (r.kind === 'job') {
         deleteJobCmd(c, name);
@@ -498,7 +510,7 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
         deleteCronJobCmd(c, name);
       } else if (r.kind === 'service') {
         const n = s.services.length;
-        s.services = s.services.filter(v => v.name !== name);
+        s.services = s.services.filter(v => !(v.name === name && v.ns === curNs));
         if (s.services.length === n) { notFound('service', name); break; }
         ok('service "' + name + '" deleted');
       } else if (r.kind === 'hpa') {
@@ -524,7 +536,9 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       const r = resRef(pos);
       if (!r || !r.kind || !r.name) { err('usage: kubectl describe pod|node|deployment|service NAME'); break; }
       const name = r.name;
-      if (r.kind === 'namespace') {
+      if (r.kind === 'quota') {
+        describeQuota(c, name);
+      } else if (r.kind === 'namespace') {
         if (!namespaces(s).includes(name)) { notFound('namespace', name); break; }
         say('Name:         ' + name); say('Status:       Active');
         say(name === 'kube-system' ? 'Description:  objects created by the Kubernetes system (control plane add-ons, DNS, proxy)' : 'Description:  <none>');
@@ -536,9 +550,10 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
         s.flags.describedPod = true;
         if (crashed(p)) s.flags.inspectedCrash = true;
         const env = [p.config && 'ConfigMap/' + p.config, p.secret && 'Secret/' + p.secret].filter(Boolean).join(', ') || '<none>';
-        const ctl = !p.owner ? '<none>  (bare pod: nothing will recreate it)' : p.owner.startsWith('job/') ? 'Job/' + p.owner.slice(4) : 'Deployment/' + p.owner;
+        const ctl = !p.owner ? '<none>  (bare pod: nothing will recreate it)' : p.owner.startsWith('job/') ? 'Job/' + p.owner.slice(4) : 'Deployment/' + p.owner.replace(/^.*\//, '');
         [
           'Name:           ' + p.name,
+          'Namespace:      ' + p.ns,
           'Labels:         ' + labelText(p.labels),
           'Node:           ' + (p.node || p.ranOn || '<none>'),
           'Status:         ' + podStatus(p),
@@ -570,21 +585,24 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
         if (!ps.length) say('  <none>', 'dim'); else ps.forEach(p => say('  ' + p.name + '   ' + p.phase));
         say('Allocated resources:  cpu ' + ps.reduce((a, p) => a + p.cpuReq, 0) + 'm of ' + NODE_CPU + 'm');
       } else if (r.kind === 'deployment') {
-        const d = depOf(s, name);
+        const d = depOf(s, keyOf(curNs, name));
         if (!d) { notFound('deployment', name); break; }
         say('Name:           ' + d.name);
-        say('Replicas:       ' + d.replicas + ' desired | ' + ownedPods(s, d.name).filter(p => p.tpl === tplOf(d)).length + ' updated | ' + readyCount(s, d.name) + ' available');
+        say('Namespace:      ' + d.ns);
+        say('Replicas:       ' + d.replicas + ' desired | ' + ownedPods(s, d.key).filter(p => p.tpl === tplOf(d)).length + ' updated | ' + readyCount(s, d.key) + ' available');
         say('Image:          ' + d.image);
         say('Requests:       cpu ' + d.res.cpu + 'm');
         say('Limits:         ' + (d.res.mem === null ? '<none>' : 'memory ' + d.res.mem + 'Mi'));
         say('Env from:       ' + ([d.config && 'ConfigMap/' + d.config, d.secret && 'Secret/' + d.secret].filter(Boolean).join(', ') || '<none>'));
         say('Paused:         ' + (d.frozen ? 'true' : 'false'));
         say('Strategy:       RollingUpdate (max surge 1, max unavailable 0)');
+        if (d.blocked) s.flags.describedBlocked = true;
+        if (d.blocked) { say('Events:'); say('  Warning  FailedCreate  ' + d.blocked, 'warn'); }
       } else if (r.kind === 'service') {
-        const v = s.services.find(x => x.name === name);
+        const v = s.services.find(x => x.name === name && x.ns === curNs);
         if (!v) { notFound('service', name); break; }
         s.flags.describedService = true;
-        say('Name:         ' + v.name); say('Selector:     ' + labelText(v.selector)); say('IP:           ' + v.ip);
+        say('Name:         ' + v.name); say('Namespace:    ' + v.ns); say('Selector:     ' + labelText(v.selector)); say('IP:           ' + v.ip);
         say('Port:         ' + v.port + '/TCP'); say('TargetPort:   ' + v.targetPort + '/TCP');
         const eps = endpoints(s, v).filter(p => p.phase === 'Running');
         say('Endpoints:    ' + (eps.length ? eps.map(p => '10.244.x.x:' + v.targetPort + ' (' + p.name + ')').join(', ') : '<none>  (no Ready pods match the selector!)'), eps.length ? '' : 'warn');
@@ -598,6 +616,7 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
 
     case 'logs': logsCmd(c); break;
 
+    case 'config': configCmd(c); break;
     case 'label': labelCmd(c); break;
     case 'patch': patchCmd(c); break;
     case 'exec': execCmd(c); break;

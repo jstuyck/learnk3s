@@ -2,7 +2,8 @@
 // compete with workloads for slots; they exist so that `kubectl get pods -A`, `-n kube-system` and `get ns` look real.
 import type { Ctx } from './ctx';
 import { strFlag } from './ctx';
-import { depRows, fmtAge, podRows, svcRows } from './format';
+import { depRows, endpointRows, fmtAge, podRows, svcRows } from './format';
+import { terminate } from './sim';
 import type { State } from './types';
 
 type Row = (string | number)[];
@@ -65,7 +66,7 @@ export function systemPods(s: State): SysPod[] {
 export const namespaces = (s: State): string[] => BASE_NAMESPACES.concat(s.namespaces ?? []).sort((a, b) => a.localeCompare(b));
 
 const age = (s: State): string => fmtAge(s.t + CLUSTER_AGE);
-const sysRows = (s: State): Row[] => systemPods(s).map(p => ['kube-system', p.name, p.ready, p.status, p.restarts, age(s)]);
+const sysRows = (s: State, wide: boolean): Row[] => systemPods(s).map(p => ['kube-system', p.name, p.ready, p.status, p.restarts, age(s), ...(wide ? ['10.244.' + (s.nodes.findIndex(n => n.name === p.node) + 1) + '.' + (p.name.length + 2), p.node] : [])]);
 
 const depSys = (s: State): Row[] => (systemPods(s).some(p => p.owner === 'coredns')
   ? [['kube-system', 'coredns', systemPods(s).filter(p => p.app === 'coredns' && p.status === 'Running').length + '/' + systemPods(s).filter(p => p.app === 'coredns').length, systemPods(s).filter(p => p.app === 'coredns').length, systemPods(s).filter(p => p.app === 'coredns' && p.status === 'Running').length, age(s)]]
@@ -80,11 +81,14 @@ const svcSys = (s: State): Row[] => (systemPods(s).length ? [['kube-system', 'ku
 /** Prefix every data row of a user table with its namespace column. */
 const prefix = (rows: Row[], ns: string): Row[] => rows.slice(1).map(r => [ns, ...r]);
 
-/** kubectl get with -n / -A, plus namespaces and daemonsets. Returns true when it handled the command. */
+const quotaUsed = (s: State, ns: string): number => s.pods.filter(p => p.ns === ns && p.phase !== 'Terminating' && p.phase !== 'Completed' && p.phase !== 'Error').length;
+
+/** kubectl get with -n / -A (or the context's namespace), plus namespaces, daemonsets and quotas. Returns true when it handled the command. */
 export function getNamespaced(c: Ctx, kind: string): boolean {
   const { s, flags, pos } = c;
   const all = !!flags['all-namespaces'];
-  const ns = strFlag(flags.namespace) ?? 'default';
+  const ns = c.ns;
+  const wide = flags.output === 'wide';
   const emit = (head: Row, rows: Row[]) => {
     if (!rows.length) c.say(all ? 'No resources found' : 'No resources found in ' + ns + ' namespace.', 'dim');
     else c.emit([head, ...rows]);
@@ -97,28 +101,40 @@ export function getNamespaced(c: Ctx, kind: string): boolean {
     s.flags.listedNamespaces = true;
     return true;
   }
-  if (!all && ns === 'default' && kind !== 'daemonset') return false;
-  if (ns !== 'default' && !all && !namespaces(s).includes(ns)) { c.err('Error from server (NotFound): namespaces "' + ns + '" not found'); return true; }
+  if (!all && ns === 'default' && kind !== 'daemonset' && kind !== 'quota') return false;
   const sys = all || ns === 'kube-system';
-  const mine = all || ns === 'default';
+  const userNs = all ? namespaces(s).filter(n => n !== 'kube-system') : sys ? [] : [ns];
   s.flags.usedAllNamespaces = s.flags.usedAllNamespaces || all;
-  if (sys) s.flags.listedSystemPods = s.flags.listedSystemPods || (kind === 'pod' || kind === 'all');
-  const podHead: Row = ['NAMESPACE', 'NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE'];
+  if (sys) {
+    s.flags.listedSystemPods = s.flags.listedSystemPods || (kind === 'pod' || kind === 'all');
+    if (!all && (kind === 'pod' || kind === 'all')) s.flags.listedKubeSystem = true;
+    if (wide && kind === 'pod') s.flags.usedWideSystem = true;
+    if (kind === 'service') s.flags.listedKubeDns = true;
+  }
+  const podHead: Row = ['NAMESPACE', 'NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE', ...(wide ? ['IP', 'NODE'] : [])];
   const depHead: Row = ['NAMESPACE', 'NAME', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'AGE'];
   const svcHead: Row = ['NAMESPACE', 'NAME', 'TYPE', 'CLUSTER-IP', 'EXTERNAL-IP', 'PORT(S)', 'AGE'];
   const dsHead: Row = ['NAMESPACE', 'NAME', 'DESIRED', 'CURRENT', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'NODE SELECTOR', 'AGE'];
+  const rqHead: Row = ['NAMESPACE', 'NAME', 'AGE', 'REQUEST', 'LIMIT'];
   const strip = (rows: Row[]): Row[] => (all ? rows : rows.map(r => r.slice(1)));
   const head = (h: Row): Row => (all ? h : h.slice(1));
   const selector = strFlag(flags.selector);
   const podData = (): Row[] => [
-    ...(mine ? prefix(podRows(s, false, selector), 'default') : []),
-    ...(sys && !selector ? sysRows(s) : []),
+    ...userNs.flatMap(n => prefix(podRows(s, wide, selector, false, s.pods.filter(p => p.ns === n)), n)),
+    ...(sys && !selector ? sysRows(s, wide) : []),
   ];
   const lines: { title?: string; head: Row; rows: Row[] }[] = [];
   if (kind === 'pod' || kind === 'all') lines.push({ title: 'pod', head: head(podHead), rows: strip(podData()) });
-  if (kind === 'service' || kind === 'all') lines.push({ title: 'service', head: head(svcHead), rows: strip([...(mine ? prefix(svcRows(s), 'default') : []), ...(sys ? svcSys(s) : [])]) });
+  if (kind === 'service' || kind === 'all') lines.push({ title: 'service', head: head(svcHead), rows: strip([...userNs.flatMap(n => prefix(svcRows(s, false, n), n)), ...(sys ? svcSys(s) : [])]) });
   if (kind === 'daemonset' || kind === 'all') lines.push({ title: 'daemonset', head: head(dsHead), rows: strip(sys ? dsSys(s) : []) });
-  if (kind === 'deployment' || kind === 'all') lines.push({ title: 'deployment', head: head(depHead), rows: strip([...(mine ? prefix(depRows(s), 'default') : []), ...(sys ? depSys(s) : [])]) });
+  if (kind === 'deployment' || kind === 'all') lines.push({ title: 'deployment', head: head(depHead), rows: strip([...userNs.flatMap(n => prefix(depRows(s, false, n), n)), ...(sys ? depSys(s) : [])]) });
+  if (kind === 'endpoints') lines.push({ head: head(['NAMESPACE', 'NAME', 'ENDPOINTS', 'AGE']), rows: strip(userNs.flatMap(n => prefix(endpointRows(s, n), n))) });
+  if (kind === 'quota') {
+    lines.push({
+      head: head(rqHead),
+      rows: strip(s.quotas.filter(q => all || q.ns === ns).map(q => [q.ns, q.name, fmtAge(s.t - q.createdAt), 'pods: ' + quotaUsed(s, q.ns) + '/' + q.pods, ''])),
+    });
+  }
   if (!lines.length) {
     if (ns !== 'default' && !all) { c.say('No resources found in ' + ns + ' namespace.', 'dim'); return true; }
     return false;   // kinds we do not model per namespace: classic output
@@ -134,16 +150,10 @@ export function getNamespaced(c: Ctx, kind: string): boolean {
 
 const findSys = (s: State, name: string): SysPod | undefined => systemPods(s).find(p => p.name === name);
 
-/** describe / logs for pods in kube-system. Returns true when the command targeted a non-default namespace. */
+/** describe / logs for pods in kube-system. Returns true when the command targeted another namespace than default's user objects. */
 export function systemPodCmd(c: Ctx, what: 'describe' | 'logs', name: string | undefined): boolean {
-  const { s, flags } = c;
-  const ns = strFlag(flags.namespace);
-  if (!ns || ns === 'default') return false;
-  if (ns !== 'kube-system') {
-    if (!namespaces(s).includes(ns)) c.err('Error from server (NotFound): namespaces "' + ns + '" not found');
-    else c.notFound('pod', name ?? '');
-    return true;
-  }
+  const { s } = c;
+  if (c.ns !== 'kube-system') return false;
   const p = name ? findSys(s, name) : undefined;
   if (!p) { c.notFound('pod', name ?? ''); return true; }
   s.flags.inspectedSystemPod = true;
@@ -163,7 +173,7 @@ export function systemPodCmd(c: Ctx, what: 'describe' | 'logs', name: string | u
   return true;
 }
 
-/** create / delete namespace. Returns true when handled. */
+/** create / delete namespace. Deleting a namespace deletes everything inside it. */
 export function namespaceCmd(c: Ctx, verb: 'create' | 'delete', name: string | undefined): void {
   const { s } = c;
   if (!name) { c.err('error: exactly one NAME is required, got 0'); return; }
@@ -176,11 +186,74 @@ export function namespaceCmd(c: Ctx, verb: 'create' | 'delete', name: string | u
     c.ok('namespace/' + name + ' created');
     return;
   }
-  if (BASE_NAMESPACES.includes(name)) { c.err('Error from server (Forbidden): namespaces "' + name + '" is forbidden: this namespace may not be deleted'); return; }
+  if (BASE_NAMESPACES.includes(name)) { s.flags.triedDeleteSystem = true; c.err('Error from server (Forbidden): namespaces "' + name + '" is forbidden: this namespace may not be deleted'); return; }
   if (!s.namespaces.includes(name)) { c.notFound('namespace', name); return; }
+  const inside = s.pods.filter(p => p.ns === name && p.phase !== 'Terminating').length + s.deployments.filter(d => d.ns === name).length + s.services.filter(v => v.ns === name).length;
+  s.deployments = s.deployments.filter(d => d.ns !== name);
+  s.services = s.services.filter(v => v.ns !== name);
+  s.quotas = s.quotas.filter(q => q.ns !== name);
+  for (const p of s.pods.filter(x => x.ns === name)) terminate(s, p);
   s.namespaces = s.namespaces.filter(n => n !== name);
+  if (s.ctxNs === name) s.ctxNs = 'default';
+  s.flags.deletedNamespace = true;
   c.ok('namespace "' + name + '" deleted');
+  if (inside) c.say('everything inside it went with it: ' + inside + ' object' + (inside === 1 ? '' : 's') + ' (pods, Deployments, Services, quotas)', 'dim');
 }
 
-/** The "tip" shown when a workload command targets a namespace other than default. */
-export const NS_NOTE = 'error: this simulator runs workloads in the default namespace only (you can still look at others with get, describe and logs)';
+/** create / delete resourcequota. */
+export function quotaCmd(c: Ctx, verb: 'create' | 'delete', name: string | undefined): void {
+  const { s } = c;
+  if (!name) { c.err('error: exactly one NAME is required, got 0'); return; }
+  if (verb === 'delete') {
+    const n = s.quotas.length;
+    s.quotas = s.quotas.filter(q => !(q.name === name && q.ns === c.ns));
+    if (s.quotas.length === n) { c.notFound('resourcequota', name); return; }
+    c.ok('resourcequota "' + name + '" deleted');
+    return;
+  }
+  const hard = strFlag(c.flags.hard);
+  const m = hard ? /^pods=(\d+)$/.exec(hard) : null;
+  if (!m) { c.err('error: --hard=pods=N is required (this simulator limits the number of pods per namespace)'); return; }
+  if (s.quotas.some(q => q.name === name && q.ns === c.ns)) { c.err('Error from server (AlreadyExists): resourcequotas "' + name + '" already exists'); return; }
+  s.quotas.push({ name, ns: c.ns, pods: Number(m[1]), createdAt: s.t });
+  s.flags.createdQuota = true;
+  c.ok('resourcequota/' + name + ' created');
+}
+
+export function describeQuota(c: Ctx, name: string): void {
+  const { s } = c;
+  const q = s.quotas.find(x => x.name === name && x.ns === c.ns);
+  if (!q) { c.notFound('resourcequota', name); return; }
+  s.flags.describedQuota = true;
+  c.say('Name:       ' + q.name);
+  c.say('Namespace:  ' + q.ns);
+  c.emit([['Resource', 'Used', 'Hard'], ['--------', '----', '----'], ['pods', quotaUsed(s, q.ns), q.pods]]);
+}
+
+/** kubectl config: the current namespace of the context. */
+export function configCmd(c: Ctx): void {
+  const { s, pos, flags } = c;
+  const sub = pos[0];
+  const ctxName = 'learnk3s';
+  if (sub === 'set-context') {
+    if (!flags.current) { c.err('error: this simulator supports: kubectl config set-context --current --namespace=NAME'); return; }
+    const ns = strFlag(flags.namespace);
+    if (!ns) { c.err('error: --namespace is required'); return; }
+    if (!namespaces(s).includes(ns)) { c.say('warning: namespace "' + ns + '" does not exist (yet); commands will fail until it does', 'warn'); }
+    s.ctxNs = ns;
+    s.flags.switchedNamespace = ns;
+    c.ok('Context "' + ctxName + '" modified.');
+  } else if (sub === 'get-contexts') {
+    s.flags.viewedContext = true;
+    c.emit([['CURRENT', 'NAME', 'CLUSTER', 'AUTHINFO', 'NAMESPACE'], ['*', ctxName, ctxName, ctxName, s.ctxNs === 'default' ? '' : s.ctxNs]]);
+  } else if (sub === 'current-context') {
+    s.flags.viewedContext = true;
+    c.say(ctxName);
+  } else if (sub === 'view') {
+    s.flags.viewedContext = true;
+    ['apiVersion: v1', 'kind: Config', 'current-context: ' + ctxName, 'contexts:', '- context:', '    cluster: ' + ctxName, ...(s.ctxNs !== 'default' ? ['    namespace: ' + s.ctxNs] : []), '    user: ' + ctxName, '  name: ' + ctxName].forEach(l => c.say(l));
+  } else c.err('error: supported: kubectl config set-context --current --namespace=NS | get-contexts | current-context | view');
+}
+
+export const NS_SYSTEM = 'error: kube-system belongs to the cluster; you can look at it (get, describe, logs) but not change it';
+export const NS_LIMIT = 'error: in this simulator Jobs, CronJobs, ConfigMaps, Secrets and autoscalers live in the default namespace (Pods, Deployments, Services and quotas work in any namespace)';

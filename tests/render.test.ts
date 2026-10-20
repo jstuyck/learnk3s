@@ -1,6 +1,6 @@
 // Smoke test: the renderer must not throw for any mission in any state the simulation can reach.
 import { describe, expect, it } from 'vitest';
-import { podAt, draw } from '../src/ui/render';
+import { podAt, draw, nsAt } from '../src/ui/render';
 import { ALL_LEVELS } from '../src/data/campaigns';
 import { cmd, openTraffic, sim, start } from './helpers';
 
@@ -22,7 +22,17 @@ describe('renderer', () => {
     for (let i = 0; i < 120; i++) {
       sim(s, 1);
       expect(() => draw(c, s, s.pods[0]?.id ?? null)).not.toThrow();
+      expect(() => draw(c, s, null, 'namespaces')).not.toThrow();
     }
+  });
+
+  it('hit-tests namespace cards', () => {
+    const s = start('n-rooms');
+    cmd(s, 'kubectl create namespace dev');
+    const names = new Set<string>();
+    for (let x = 0; x < 960; x += 20) for (let y = 0; y < 500; y += 20) { const n = nsAt(s, x, y); if (n) names.add(n); }
+    expect([...names].sort()).toEqual(['default', 'dev', 'kube-node-lease', 'kube-public', 'kube-system']);
+    expect(nsAt(s, 2, 2)).toBeNull();
   });
 
   it('hit-tests pods', () => {

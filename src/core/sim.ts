@@ -25,7 +25,7 @@ export function newState(level: Level, seed: number = Date.now()): State {
   const s: State = {
     level, rng: makeRng(seed), t: 0, tt: 0,
     mode: level.traffic && !level.traffic.auto ? 'prep' : 'live',
-    nodes: [], pods: [], deployments: [], services: [], configmaps: [], secrets: [], hpas: [], jobs: [], cronjobs: [],
+    nodes: [], pods: [], deployments: [], services: [], configmaps: [], secrets: [], hpas: [], jobs: [], cronjobs: [], quotas: [], ctxNs: 'default',
     money: { rev: 0, cost: 0, pen: 0 }, recent: [], nodeSeq: level.nodes,
     reqs: [], fx: [], msgs: [],
     stats: { sent: 0, served: 0, failed: 0 },
@@ -43,7 +43,9 @@ export function newState(level: Level, seed: number = Date.now()): State {
 
 // ---- helpers --------------------------------------------------------------
 export const say = (s: State, text: string, cls?: string): void => { s.msgs.push({ t: text, c: cls || '' }); };
-export const depOf = (s: State, name: string): Deployment | undefined => s.deployments.find(d => d.name === name);
+/** The key a Deployment is known by: its name in the default namespace, ns/name elsewhere. */
+export const keyOf = (ns: string, name: string): string => (ns === 'default' ? name : ns + '/' + name);
+export const depOf = (s: State, key: string): Deployment | undefined => s.deployments.find(d => d.key === key);
 export const ownedPods = (s: State, name: string): Pod[] => s.pods.filter(p => p.owner === name && p.phase !== 'Terminating');
 export const readyCount = (s: State, name: string): number => s.pods.filter(p => p.owner === name && p.phase === 'Running').length;
 const countable = (p: Pod): boolean => p.phase !== 'Terminating' && !(p.phase === 'Unknown' && p.phaseT >= STALE);
@@ -87,10 +89,11 @@ function suffix(s: State): string {
 
 export function addDeployment(
   s: State,
-  o: { name: string; image: string; replicas: number; config?: string; secret?: string; res?: Partial<Resources> },
+  o: { name: string; image: string; replicas: number; config?: string; secret?: string; res?: Partial<Resources>; ns?: string },
 ): Deployment {
+  const ns = o.ns ?? 'default';
   const d: Deployment = {
-    name: o.name, app: o.name, image: o.image, config: o.config || null, secret: o.secret || null,
+    name: o.name, ns, key: keyOf(ns, o.name), app: o.name, image: o.image, config: o.config || null, secret: o.secret || null,
     res: { cpu: o.res?.cpu ?? DEFAULT_CPU, mem: o.res?.mem ?? null }, restart: 0, frozen: null,
     replicas: o.replicas, createdAt: s.t, history: [], rollouts: 0,
   };
@@ -100,9 +103,9 @@ export function addDeployment(
 }
 
 /** Create a Service. A string selector means app=<string>. */
-export function addService(s: State, name: string, selector: string | Labels, port = 80, targetPort = port): Service {
+export function addService(s: State, name: string, selector: string | Labels, port = 80, targetPort = port, ns = 'default'): Service {
   const v: Service = {
-    name, selector: typeof selector === 'string' ? { app: selector } : { ...selector }, port, targetPort,
+    name, ns, selector: typeof selector === 'string' ? { app: selector } : { ...selector }, port, targetPort,
     createdAt: s.t, ip: '10.96.' + (s.services.length + 11) + '.' + (30 + s.services.length * 17),
   };
   s.services.push(v);
@@ -113,11 +116,11 @@ export function makePod(
   s: State,
   o: {
     name: string; app: string; image: string; tpl?: string; config?: string | null; secret?: string | null; owner?: string | null;
-    labels?: Labels; cpuReq?: number; memLimit?: number | null; command?: string[]; runFor?: number; willFail?: boolean;
+    labels?: Labels; cpuReq?: number; memLimit?: number | null; command?: string[]; runFor?: number; willFail?: boolean; ns?: string;
   },
 ): Pod {
   const p: Pod = {
-    id: s.nextId++, name: o.name, app: o.app, labels: { app: o.app, ...(o.labels || {}) }, image: o.image,
+    id: s.nextId++, name: o.name, ns: o.ns ?? 'default', app: o.app, labels: { app: o.app, ...(o.labels || {}) }, image: o.image,
     tpl: o.tpl || o.image + '|||100||0',
     config: o.config || null, secret: o.secret || null, owner: o.owner || null,
     node: null, ranOn: null, slot: -1, phase: 'Pending', phaseT: 0, age: 0, restarts: 0,
@@ -136,8 +139,22 @@ function spawnDepPod(s: State, d: Deployment): Pod {
   const T = templateOf(d);
   return makePod(s, {
     name: d.name + '-' + suffix(s), app: d.app, image: T.image, tpl: tplOf(T), config: T.config, secret: T.secret,
-    owner: d.name, cpuReq: T.res.cpu, memLimit: T.res.mem,
+    owner: d.key, ns: d.ns, cpuReq: T.res.cpu, memLimit: T.res.mem,
   });
+}
+
+/** Create a pod unless the namespace's ResourceQuota is used up. */
+function trySpawn(s: State, d: Deployment): boolean {
+  for (const q of s.quotas.filter(x => x.ns === d.ns)) {
+    const used = s.pods.filter(p => p.ns === d.ns && p.phase !== 'Terminating' && p.phase !== 'Completed' && p.phase !== 'Error').length;
+    if (used >= q.pods) {
+      d.blocked = 'Error creating: pods "' + d.name + '-..." is forbidden: exceeded quota: ' + q.name + ', requested: pods=1, used: pods=' + used + ', limited: pods=' + q.pods;
+      return false;
+    }
+  }
+  d.blocked = undefined;
+  spawnDepPod(s, d);
+  return true;
 }
 function removePod(s: State, p: Pod): void { s.pods = s.pods.filter(x => x !== p); }
 export function terminate(s: State, p: Pod): void {
@@ -269,7 +286,7 @@ function schedule(s: State): void {
     const taken = new Set(s.pods.filter(x => x.node === n.name).map(x => x.slot));
     let slot = 0; while (taken.has(slot)) slot++;
     p.node = n.name; p.slot = slot; p.phase = 'ContainerCreating'; p.phaseT = 0;
-    podEvent(s, p, 'Normal', 'Scheduled', 'Successfully assigned default/' + p.name + ' to ' + n.name);
+    podEvent(s, p, 'Normal', 'Scheduled', 'Successfully assigned ' + p.ns + '/' + p.name + ' to ' + n.name);
     podEvent(s, p, 'Normal', 'Pulling', 'Pulling image "' + p.image + '"');
     s.cpPulse = 1;
   }
@@ -277,7 +294,7 @@ function schedule(s: State): void {
 
 function reconcileDeployment(s: State, d: Deployment): void {
   const tpl = tplOf(templateOf(d));
-  let owned = s.pods.filter(p => p.owner === d.name && countable(p));
+  let owned = s.pods.filter(p => p.owner === d.key && countable(p));
   const isReady = (p: Pod) => p.phase === 'Running';
   // anything of an old template that is not serving gets removed right away
   for (const p of owned.filter(p => p.tpl !== tpl && !isReady(p))) { terminate(s, p); s.cpPulse = 1; }
@@ -287,7 +304,8 @@ function reconcileDeployment(s: State, d: Deployment): void {
   const ready = owned.filter(isReady).length;
 
   if (!old.length) {
-    if (owned.length < d.replicas) { for (let i = owned.length; i < d.replicas; i++) spawnDepPod(s, d); s.cpPulse = 1; }
+    if (owned.length >= d.replicas) d.blocked = undefined;
+    if (owned.length < d.replicas) { for (let i = owned.length; i < d.replicas; i++) if (!trySpawn(s, d)) break; s.cpPulse = 1; }
     else if (owned.length > d.replicas) {
       const victims = owned.slice().sort((a, b) => (Number(isReady(a)) - Number(isReady(b))) || (a.age - b.age));
       for (const p of victims.slice(0, owned.length - d.replicas)) terminate(s, p);
@@ -300,7 +318,7 @@ function reconcileDeployment(s: State, d: Deployment): void {
     for (const p of old) terminate(s, p);
     s.cpPulse = 1; return;
   }
-  if (cur.length < d.replicas && owned.length < d.replicas + 1) { spawnDepPod(s, d); s.cpPulse = 1; }
+  if (cur.length < d.replicas && owned.length < d.replicas + 1) { trySpawn(s, d); s.cpPulse = 1; }
   else if (ready > d.replicas) {
     const victim = old.filter(isReady).sort((a, b) => b.age - a.age)[0];
     if (victim) { terminate(s, victim); s.cpPulse = 1; }
@@ -388,7 +406,7 @@ function reconcile(s: State): void {
   s.peak.nodes = Math.max(s.peak.nodes || 0, s.nodes.length);
   for (const d of s.deployments) {
     reconcileDeployment(s, d);
-    s.peak[d.name] = Math.max(s.peak[d.name] || 0, d.replicas);
+    s.peak[d.key] = Math.max(s.peak[d.key] || 0, d.replicas);
   }
   for (const c of s.cronjobs.slice()) reconcileCron(s, c);
   for (const j of s.jobs.slice()) reconcileJob(s, j);
@@ -396,7 +414,7 @@ function reconcile(s: State): void {
   // self-heal tracking for the tutorial
   if (s.flags.deletedOwned && !s.flags.selfHealed) {
     const d = depOf(s, s.flags.deletedOwned);
-    if (d && readyCount(s, d.name) >= d.replicas && !s.pods.some(p => p.owner === d.name && p.phase === 'Terminating')) s.flags.selfHealed = true;
+    if (d && readyCount(s, d.key) >= d.replicas && !s.pods.some(p => p.owner === d.key && p.phase === 'Terminating')) s.flags.selfHealed = true;
   }
 }
 
@@ -405,7 +423,7 @@ function stepHpa(s: State): void {
     const d = depOf(s, h.dep);
     if (!d) continue;
     d.replicas = Math.max(h.min, Math.min(h.max, d.replicas));
-    const run = s.pods.filter(p => p.owner === d.name && p.phase === 'Running');
+    const run = s.pods.filter(p => p.owner === d.key && p.phase === 'Running');
     if (!run.length) continue;
     h.current = run.reduce((a, p) => a + p.util, 0) / run.length;
     let desired = Math.ceil(run.length * h.current / (h.cpu / 100) - 1e-6);
@@ -464,11 +482,11 @@ function stepEvents(s: State): void {
 
 // ---- traffic --------------------------------------------------------------
 export function endpoints(s: State, svc: Service): Pod[] {
-  return s.pods.filter(p => selectorMatches(svc.selector, p.labels) && (p.phase === 'Running' || (p.phase === 'Unknown' && p.phaseT < STALE)));
+  return s.pods.filter(p => p.ns === svc.ns && selectorMatches(svc.selector, p.labels) && (p.phase === 'Running' || (p.phase === 'Unknown' && p.phaseT < STALE)));
 }
 /** The Service users call for a traffic profile. */
 export const trafficService = (s: State, tr: Traffic): Service | undefined =>
-  s.services.find(v => v.name === tr.app) ?? s.services.find(v => v.selector.app === tr.app);
+  s.services.find(v => v.ns === 'default' && v.name === tr.app) ?? s.services.find(v => v.ns === 'default' && v.selector.app === tr.app);
 const podLoad = (s: State, p: Pod): number => p.busy.length + s.reqs.filter(r => r.stage === 'toPod' && r.pod === p).length;
 
 function failReq(s: State, r: Request, where: 'users' | 'svc' | 'pod'): void {

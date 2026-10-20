@@ -42,7 +42,7 @@ export const labelText = (labels: Record<string, string>): string =>
 export const podStatus = (p: Pod): string =>
   p.phase === 'CrashLoopBackOff' && p.reason === 'OOMKilled' && p.restarts === 0 ? 'OOMKilled' : p.phase;
 
-export function podRows(s: State, wide = false, selector?: string, showLabels = false, list: Pod[] = s.pods): Row[] {
+export function podRows(s: State, wide = false, selector?: string, showLabels = false, list: Pod[] = s.pods.filter(p => p.ns === 'default')): Row[] {
   const head = ['NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE'].concat(wide ? ['IP', 'NODE'] : [], showLabels ? ['LABELS'] : []);
   const rows: Row[] = [head];
   for (const p of list.filter(x => matchesSelector(x, selector))) {
@@ -54,28 +54,28 @@ export function podRows(s: State, wide = false, selector?: string, showLabels = 
   return rows;
 }
 
-export function depRows(s: State, wide = false): Row[] {
+export function depRows(s: State, wide = false, ns = 'default'): Row[] {
   const rows: Row[] = [['NAME', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'AGE'].concat(wide ? ['CONTAINERS', 'IMAGES', 'SELECTOR'] : [])];
-  for (const d of s.deployments) {
-    const own = ownedPods(s, d.name);
+  for (const d of s.deployments.filter(x => x.ns === ns)) {
+    const own = ownedPods(s, d.key);
     rows.push([
-      d.name, readyCount(s, d.name) + '/' + d.replicas, own.filter(p => p.tpl === tplOf(d)).length, readyCount(s, d.name), fmtAge(s.t - d.createdAt),
+      d.name, readyCount(s, d.key) + '/' + d.replicas, own.filter(p => p.tpl === tplOf(d)).length, readyCount(s, d.key), fmtAge(s.t - d.createdAt),
     ].concat(wide ? [d.name, d.image, 'app=' + d.app] : []));
   }
   return rows;
 }
 
-export function svcRows(s: State, wide = false): Row[] {
+export function svcRows(s: State, wide = false, ns = 'default'): Row[] {
   const rows: Row[] = [['NAME', 'TYPE', 'CLUSTER-IP', 'EXTERNAL-IP', 'PORT(S)', 'AGE'].concat(wide ? ['SELECTOR'] : [])];
-  for (const v of s.services) {
+  for (const v of s.services.filter(x => x.ns === ns)) {
     rows.push([v.name, v.nodePort ? 'NodePort' : 'ClusterIP', v.ip, '<none>', v.port + (v.nodePort ? ':' + v.nodePort : '') + '/TCP', fmtAge(s.t - v.createdAt)].concat(wide ? [labelText(v.selector)] : []));
   }
   return rows;
 }
 
-export function endpointRows(s: State): Row[] {
+export function endpointRows(s: State, ns = 'default'): Row[] {
   const rows: Row[] = [['NAME', 'ENDPOINTS', 'AGE']];
-  for (const v of s.services) {
+  for (const v of s.services.filter(x => x.ns === ns)) {
     const eps = endpoints(s, v).filter(p => p.phase === 'Running').map(p => podIp(s, p) + ':' + v.targetPort);
     rows.push([v.name, eps.length ? eps.join(',') : '<none>', fmtAge(s.t - v.createdAt)]);
   }
@@ -95,9 +95,9 @@ export function nodeRows(s: State, showLabels = false): Row[] {
 /** `kubectl top pods`: a pod is requested at 500m CPU, so a saturated pod sits near 500m. */
 export const POD_CPU_REQUEST_M = 500;
 const podMem = (p: Pod): number => 40 + (p.id % 17);
-export function topRows(s: State, sortBy?: 'cpu' | 'memory'): Row[] {
+export function topRows(s: State, sortBy?: 'cpu' | 'memory', ns = 'default'): Row[] {
   const rows: Row[] = [['NAME', 'CPU(cores)', 'MEMORY(bytes)']];
-  const running = s.pods.filter(x => x.phase === 'Running');
+  const running = s.pods.filter(x => x.phase === 'Running' && x.ns === ns);
   if (sortBy) running.sort((a, b) => (sortBy === 'cpu' ? b.util - a.util : podMem(b) - podMem(a)));
   for (const p of running) rows.push([p.name, Math.round(p.util * POD_CPU_REQUEST_M) + 'm', podMem(p) + 'Mi']);
   return rows;

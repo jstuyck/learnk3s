@@ -8,7 +8,8 @@ import { calcStars } from '../core/scoring';
 import { newState, step } from '../core/sim';
 import type { Campaign, Level, Line, State } from '../core/types';
 import { CAMPAIGNS } from '../data/campaigns';
-import { VH, VW, draw, podAt } from './render';
+import { VH, VW, draw, nsAt, podAt } from './render';
+import type { View } from './render';
 import { loadSave, recordWin, writeSave, emptySave } from './save';
 import { initShell } from './shell';
 
@@ -25,6 +26,7 @@ let lastTs = 0;
 let outcomeShown = false;
 let shownDone = -1;
 let selectedId: number | null = null;
+let view: View = 'cluster';
 
 const cv = $<HTMLCanvasElement>('cv');
 const ctx = cv.getContext('2d')!;
@@ -133,6 +135,7 @@ function startLevel(i: number): void {
   const L: Level = campaign.levels[i];
   S = newState(L);
   outcomeShown = false; shownDone = -1; selectedId = null; speed = 1; paused = true;
+  setView('cluster');
   $('term-out').innerHTML = '';
   termPrint([{ t: 'Mission ' + (i + 1) + ': ' + L.title + '   (type "help" for commands, Tab to complete)', c: 'dim' }]);
   refreshPrompt();
@@ -279,9 +282,14 @@ cv.addEventListener('click', e => {
   if (!S) return;
   const r = cv.getBoundingClientRect();
   const x = (e.clientX - r.left) * VW / r.width, y = (e.clientY - r.top) * VH / r.height;
+  if (view === 'namespaces') {
+    const name = nsAt(S, x, y);
+    if (name && !S.outcome && !S.level.hardway) submitCommand('kubectl get pods -n ' + name);
+    return;
+  }
   const p = podAt(S, x, y);
   selectedId = p ? p.id : null;
-  if (p && !S.outcome) submitCommand('kubectl describe pod ' + p.name);
+  if (p && !S.outcome) submitCommand('kubectl describe pod ' + p.name + (p.ns === 'default' ? '' : ' -n ' + p.ns));
 });
 
 // ---- controls -------------------------------------------------------------
@@ -303,6 +311,13 @@ $('btn-hint').addEventListener('click', () => {
   S.hintsUsed++;
   if (n + 1 >= hs.length) $<HTMLButtonElement>('btn-hint').disabled = true;
 });
+function setView(v: View): void {
+  view = v;
+  $('btn-view').textContent = v === 'namespaces' ? 'Cluster' : 'Namespaces';
+  $('btn-view').style.display = S?.level.hardway === 'machines' ? 'none' : '';
+  if (v === 'namespaces' && S) S.flags.openedNamespaceView = true;
+}
+$('btn-view').addEventListener('click', () => setView(view === 'namespaces' ? 'cluster' : 'namespaces'));
 $('btn-brief').addEventListener('click', openMission);
 $('tut-run').addEventListener('click', () => {
   const step = S?.level.tutorial?.[S.tutStep ?? 0];
@@ -365,7 +380,7 @@ function frame(ts: number): void {
     if (S.msgs.length) { termPrint(S.msgs); S.msgs.length = 0; }
     if (Object.keys(S.done).length !== shownDone) renderObjectives();
     updateHud(S);
-    draw(ctx, S, selectedId);
+    draw(ctx, S, selectedId, view);
     if (S.outcome && !outcomeShown) endLevel();
   }
   requestAnimationFrame(frame);
