@@ -90,7 +90,11 @@ h1 { font-size: clamp(2.4rem, 7vw, 3.6rem); margin: 10px 0 4px; letter-spacing: 
 .canvas-wrap { background: #0b1226; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
 #cv { display: block; width: 100%; aspect-ratio: 960 / 500; cursor: pointer; }
 .term { margin-top: 12px; background: #070c19; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-.term-out { height: 230px; overflow-y: auto; padding: 10px 14px; font: 13px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.term-bar { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-bottom: 1px solid var(--line); font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; color: var(--dim); }
+.term-bar .btn.small { margin-top: 0; padding: 1px 8px; font-size: .8rem; text-transform: none; letter-spacing: 0; }
+.left.term-big .canvas-wrap { display: none; }
+.left.term-big .term-out { height: calc(100vh - 210px); }
+.term-out { height: var(--term-h, 230px); min-height: 120px; max-height: 85vh; resize: vertical; font-size: var(--term-font, 13px) !important; overflow-y: auto; padding: 10px 14px; font: 13px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; }
 .term-out .cmd { color: var(--accent2); }
 .term-out .ok { color: var(--ok); }
 .term-out .err { color: var(--bad); }

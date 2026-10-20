@@ -136,6 +136,7 @@ function startLevel(i: number): void {
   S = newState(L);
   outcomeShown = false; shownDone = -1; selectedId = null; speed = 1; paused = true;
   setView('cluster');
+  document.documentElement.style.setProperty('--term-h', L.hardway ? '340px' : '230px');
   $('term-out').innerHTML = '';
   termPrint([{ t: 'Mission ' + (i + 1) + ': ' + L.title + '   (type "help" for commands, Tab to complete)', c: 'dim' }]);
   refreshPrompt();
@@ -317,6 +318,19 @@ $('btn-hint').addEventListener('click', () => {
   S.hintsUsed++;
   if (n + 1 >= hs.length) $<HTMLButtonElement>('btn-hint').disabled = true;
 });
+let termFont = 13;
+function setTermFont(px: number): void {
+  termFont = Math.max(10, Math.min(24, px));
+  document.documentElement.style.setProperty('--term-font', termFont + 'px');
+}
+$('term-font-plus').addEventListener('click', () => setTermFont(termFont + 1));
+$('term-font-minus').addEventListener('click', () => setTermFont(termFont - 1));
+$('term-expand').addEventListener('click', () => {
+  const big = document.querySelector('.left')!.classList.toggle('term-big');
+  $('term-expand').textContent = big ? 'Show picture' : 'Expand';
+  $('term-out').scrollTop = $('term-out').scrollHeight;
+});
+
 function setView(v: View): void {
   view = v;
   $('btn-view').textContent = v === 'namespaces' ? 'Cluster' : 'Namespaces';
