@@ -1,6 +1,8 @@
 // Tab completion for the in-game terminal. Pure function, easy to test.
 import { IMAGES } from '../data/images';
 import { KIND, SUPPORTED } from './cli';
+import { listDir, normalize } from './hardway';
+import { namespaces } from './system';
 import type { State } from './types';
 
 export interface Completion {
@@ -10,7 +12,7 @@ export interface Completion {
 }
 
 const VERBS = SUPPORTED.slice();
-const KINDS = ['pods', 'deployments', 'services', 'nodes', 'configmaps', 'secrets', 'hpa', 'endpoints', 'jobs', 'cronjobs'];
+const KINDS = ['pods', 'deployments', 'services', 'nodes', 'configmaps', 'secrets', 'hpa', 'endpoints', 'jobs', 'cronjobs', 'namespaces', 'daemonsets'];
 const ALIASES = ['po', 'deploy', 'svc', 'cm', 'no', 'ep', 'cj'];
 const FLAGS: Record<string, string[]> = {
   run: ['--image=', '--labels=app=', '--restart=Never'],
@@ -39,6 +41,7 @@ export function completeLine(s: State, line: string): Completion {
   const pick = (list: string[]) => list.filter(x => x.startsWith(cur));
   const res = (options: string[]): Completion => ({ start, options });
 
+  if (s.hw && prev[0] !== 'kubectl') return completeHw(s, prev, cur, start);
   if (!prev.length) return res(pick(['kubectl', 'k', 'cloud', 'help', 'clear']));
 
   const names = {
@@ -52,6 +55,8 @@ export function completeLine(s: State, line: string): Completion {
     secret: s.secrets.map(c => c.name),
     hpa: s.hpas.map(h => h.dep),
     node: s.nodes.map(n => n.name),
+    namespace: namespaces(s),
+    daemonset: ['kube-proxy', 'kindnet'],
   };
   const last = prev[prev.length - 1];
   if (last === '-o') return res(pick(OUTPUTS));
@@ -150,4 +155,42 @@ export function commonPrefix(list: string[]): string {
   let p = list[0] ?? '';
   for (const x of list) while (!x.startsWith(p)) p = p.slice(0, -1);
   return p;
+}
+
+// ---- The Hard Way shell ---------------------------------------------------------------------------------------------------
+const HW_COMMANDS = ['ls', 'cat', 'cd', 'pwd', 'mkdir', 'cp', 'mv', 'rm', 'chmod', 'touch', 'echo', 'export', 'head', 'grep', 'cut', 'base64', 'sed', 'envsubst', 'hexdump',
+  'wc', 'tar', 'wget', 'git', 'ssh', 'ssh-keygen', 'ssh-copy-id', 'scp', 'openssl', 'systemctl', 'journalctl', 'apt-get', 'swapoff', 'swapon', 'modprobe', 'sysctl', 'ip',
+  'etcdctl', 'curl', 'kubectl', 'hostnamectl', 'hostname', 'exit', 'help', 'clear'];
+const SYSTEMCTL = ['daemon-reload', 'enable', 'disable', 'start', 'stop', 'restart', 'status', 'is-active'];
+const HOSTS = ['server', 'node-0', 'node-1'];
+
+function completeHw(s: State, prev: string[], cur: string, start: number): Completion {
+  const hw = s.hw!;
+  const res = (options: string[]): Completion => ({ start, options: [...new Set(options)] });
+  const pick = (list: string[]) => list.filter(x => x.startsWith(cur));
+  if (!prev.length) return res(pick(HW_COMMANDS));
+  const cmd = prev[0];
+  const argIndex = prev.filter(x => !x.startsWith('-')).length - 1;
+  const pathsOn = (machine: string, base: string, cwd: string): string[] => {
+    const m = hw.machines[machine];
+    const i = base.lastIndexOf('/');
+    const dirPart = base.slice(0, i + 1), namePart = base.slice(i + 1);
+    const dir = normalize(dirPart || '.', cwd);
+    return listDir(m, dir).filter(k => k.name.startsWith(namePart) && (namePart.startsWith('.') || !k.name.startsWith('.'))).map(k => dirPart + k.name + (k.dir ? '/' : ''));
+  };
+  if (cmd === 'systemctl') {
+    if (argIndex === 0) return res(pick(SYSTEMCTL));
+    const m = hw.machines[hw.active];
+    return res(pick(Object.keys(m.files).map(f => /^\/etc\/systemd\/system\/([\w-]+)\.service$/.exec(f)?.[1]).filter((x): x is string => !!x)));
+  }
+  if (cmd === 'openssl' && argIndex === 0) return res(pick(['genrsa', 'req', 'x509']));
+  if (cmd === 'ip' && argIndex === 0) return res(pick(['route']));
+  if ((cmd === 'ssh' || cmd === 'ssh-copy-id') && !prev.slice(1).some(x => x.startsWith('root@')) && !cur.includes('/')) return res(pick(HOSTS.map(h => 'root@' + h)));
+  const remote = /^(root@([\w.-]+)):(.*)$/.exec(cur);
+  if (cmd === 'scp' && remote && hw.machines[remote[2]]) {
+    return res(pathsOn(remote[2], remote[3] || '', '/root').map(p => remote[1] + ':' + p));
+  }
+  if (cmd === 'scp' && /^root@?[\w.-]*$/.test(cur)) return res(pick(HOSTS.map(h => 'root@' + h + ':')));
+  if (cur.startsWith('$') || cur.startsWith('-')) return res([]);
+  return res(pathsOn(hw.active, cur, hw.cwd[hw.active]));
 }

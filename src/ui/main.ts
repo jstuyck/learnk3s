@@ -2,6 +2,7 @@
 // UI glue: screens, campaign map, terminal, game loop.
 // ---------------------------------------------------------------------------
 import { runCommand } from '../core/cli';
+import { hwPrompt } from '../core/hwshell';
 import { burnRate, profit, revenueRate } from '../core/economy';
 import { calcStars } from '../core/scoring';
 import { newState, step } from '../core/sim';
@@ -133,6 +134,8 @@ function startLevel(i: number): void {
   outcomeShown = false; shownDone = -1; selectedId = null; speed = 1; paused = true;
   $('term-out').innerHTML = '';
   termPrint([{ t: 'Mission ' + (i + 1) + ': ' + L.title + '   (type "help" for commands, Tab to complete)', c: 'dim' }]);
+  refreshPrompt();
+  $<HTMLInputElement>('term-input').placeholder = L.hardway ? 'ls, ssh, scp, openssl, systemctl ...   (type help)' : 'kubectl ...   (type help)';
   $('g-title').textContent = L.title;
   $('g-tag').textContent = L.tag;
   $('st-max').textContent = L.traffic && !L.econ ? ' / ' + L.traffic.maxFail : '';
@@ -217,6 +220,7 @@ const history = initShell({
   prompt: document.querySelector('.prompt') as HTMLElement,
   form: $<HTMLFormElement>('term-form'),
   getState: () => S,
+  promptText: () => (S?.hw ? hwPrompt(S) : '$'),
   print: termPrint,
   clear: termClear,
 });
@@ -225,10 +229,15 @@ function submitCommand(raw: string): void {
   const line = raw.trim();
   if (!line) return;
   history.push(line);
-  termPrint([{ t: '$ ' + line, c: 'cmd' }]);
+  const shownPrompt = S?.hw ? hwPrompt(S) : '$';
+  termPrint([{ t: shownPrompt + ' ' + line, c: 'cmd' }]);
   if (line === 'clear') { termClear(); return; }
   if (!S || S.outcome) return;
   termPrint(runCommand(S, line));
+  refreshPrompt();
+}
+function refreshPrompt(): void {
+  (document.querySelector('.prompt') as HTMLElement).textContent = S?.hw ? hwPrompt(S) : '$';
 }
 $<HTMLFormElement>('term-form').addEventListener('submit', e => {
   e.preventDefault();

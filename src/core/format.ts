@@ -16,6 +16,7 @@ export function fmtAge(seconds: number): string {
   const t = Math.max(0, Math.floor(seconds));
   if (t < 120) return t + 's';
   if (t < 3600) return Math.floor(t / 60) + 'm' + (t % 60 ? (t % 60) + 's' : '');
+  if (t >= 172800) return Math.floor(t / 86400) + 'd' + (Math.floor(t / 3600) % 24 ? (Math.floor(t / 3600) % 24) + 'h' : '');
   return Math.floor(t / 3600) + 'h' + (Math.floor(t / 60) % 60 ? (Math.floor(t / 60) % 60) + 'm' : '');
 }
 export const ageStr = (s: State, t: number): string => fmtAge(s.t - t);
@@ -67,7 +68,7 @@ export function depRows(s: State, wide = false): Row[] {
 export function svcRows(s: State, wide = false): Row[] {
   const rows: Row[] = [['NAME', 'TYPE', 'CLUSTER-IP', 'EXTERNAL-IP', 'PORT(S)', 'AGE'].concat(wide ? ['SELECTOR'] : [])];
   for (const v of s.services) {
-    rows.push([v.name, 'ClusterIP', v.ip, '<none>', v.port + '/TCP', fmtAge(s.t - v.createdAt)].concat(wide ? [labelText(v.selector)] : []));
+    rows.push([v.name, v.nodePort ? 'NodePort' : 'ClusterIP', v.ip, '<none>', v.port + (v.nodePort ? ':' + v.nodePort : '') + '/TCP', fmtAge(s.t - v.createdAt)].concat(wide ? [labelText(v.selector)] : []));
   }
   return rows;
 }

@@ -117,6 +117,8 @@ export interface Service {
   targetPort: number;
   createdAt: number;
   ip: string;
+  /** set for `--type=NodePort`: the port opened on every node */
+  nodePort?: number;
 }
 
 export interface KeyValueObject {
@@ -223,6 +225,8 @@ export interface Level {
   traffic: Traffic | null;
   econ?: Econ;
   setup?(s: State): void;
+  /** Hard Way missions: the terminal is a Linux shell on the lab machines, and there are no system pods */
+  hardway?: 'machines' | 'cluster';
   story: string;
   objectives: Objective[];
   /** "command | what it does" - deliberately without arguments */
@@ -283,6 +287,20 @@ export interface Flags {
   setResources?: boolean;
   /** rollouts that started while the Deployment was paused (should stay 0) */
   rolloutWhilePaused?: boolean;
+  ranKubectl?: boolean;
+  listedNodes?: boolean;
+  inspectedCert?: boolean;
+  usedEtcdctl?: boolean;
+  curledApi?: boolean;
+  jumpboxKubectl?: boolean;
+  checkedEncryption?: boolean;
+  readPodLogs?: boolean;
+  curledNodePort?: boolean;
+  listedNamespaces?: boolean;
+  usedAllNamespaces?: boolean;
+  listedSystemPods?: boolean;
+  inspectedSystemPod?: boolean;
+  createdNamespace?: boolean;
   /** scale with a --current-replicas precondition that held */
   guardedScale?: boolean;
   usedJsonpath?: boolean;
@@ -317,6 +335,10 @@ export interface State {
   hpas: Hpa[];
   jobs: Job[];
   cronjobs: CronJob[];
+  /** namespaces created by the player (besides default and the system ones) */
+  namespaces?: string[];
+  /** Kubernetes the Hard Way: the machines, files and services of the hand-built cluster */
+  hw?: import('./hardway').HardWay;
   money: { rev: number; cost: number; pen: number };
   recent: number[];
   nodeSeq: number;

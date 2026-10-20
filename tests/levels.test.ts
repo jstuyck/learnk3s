@@ -11,12 +11,13 @@ describe('campaign data', () => {
   });
 
   it('has the expected campaigns', () => {
-    expect(CAMPAIGNS.map(c => c.id)).toEqual(['rookie', 'practitioner', 'elite', 'profit']);
-    expect(CAMPAIGNS.map(c => c.mode)).toEqual(['campaign', 'campaign', 'campaign', 'profit']);
+    expect(CAMPAIGNS.map(c => c.id)).toEqual(['rookie', 'practitioner', 'elite', 'hardway', 'profit']);
+    expect(CAMPAIGNS.map(c => c.mode)).toEqual(['campaign', 'campaign', 'campaign', 'campaign', 'profit']);
     expect(CAMPAIGNS[0].levels).toHaveLength(8);
     expect(CAMPAIGNS[1].levels).toHaveLength(6);
     expect(CAMPAIGNS[2].levels).toHaveLength(6);
-    expect(CAMPAIGNS[3].levels).toHaveLength(6);
+    expect(CAMPAIGNS[3].levels).toHaveLength(12);
+    expect(CAMPAIGNS[4].levels).toHaveLength(6);
   });
 
   describe.each(ALL_LEVELS.map(l => [l.id, l] as const))('%s', (_id, L) => {
@@ -31,7 +32,7 @@ describe('campaign data', () => {
         const [cmd, desc, ...rest] = c.split(' | ');
         expect(rest).toHaveLength(0);
         expect(desc?.length).toBeGreaterThan(3);
-        expect(cmd).toMatch(/^(kubectl|cloud) [a-z-]+( [a-z]+)?$/);
+        expect(cmd).toMatch(L.hardway ? /^[a-z0-9-]+( [a-z0-9-]+)?$/ : /^(kubectl|cloud) [a-z-]+( [a-z]+)?$/);
         expect(cmd).not.toMatch(/--|=/);
       }
     });
@@ -47,7 +48,7 @@ describe('campaign data', () => {
     it('seeds a cluster whose images all exist in the catalog', () => {
       const s = newState(L, 1);
       for (const d of s.deployments) expect(IMAGES[d.image], d.image).toBeDefined();
-      expect(s.nodes).toHaveLength(L.nodes);
+      if (!L.hardway) expect(s.nodes).toHaveLength(L.nodes);
     });
 
     it('traffic missions have a positive rate and a Service-less start unless seeded', () => {
@@ -72,6 +73,7 @@ describe('campaign data', () => {
     expect(CAMPAIGNS[0].levels.some(l => l.econ)).toBe(false);
     expect(CAMPAIGNS[1].levels.some(l => l.econ)).toBe(false);
     expect(CAMPAIGNS[2].levels.some(l => l.econ)).toBe(false);
-    expect(CAMPAIGNS[3].levels.every(l => l.econ)).toBe(true);
+    expect(CAMPAIGNS[3].levels.some(l => l.econ)).toBe(false);
+    expect(CAMPAIGNS[4].levels.every(l => l.econ)).toBe(true);
   });
 });

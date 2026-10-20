@@ -2,7 +2,7 @@
 
 **Play it online: https://jstuyck.github.io/learnk3s/**
 
-A 2D browser game that teaches Kubernetes. Three campaigns, a simulated `kubectl` terminal with Tab completion, history and Ctrl+R.
+A 2D browser game that teaches Kubernetes. Four campaigns, a simulated `kubectl` terminal with Tab completion, history and Ctrl+R.
 
 The terminal only accepts real `kubectl` commands, with real flags and output columns (`kubectl --help` prints the real help). Real commands the simulator does not implement (`apply`, `exec`, ...) say so. Money-related things live in a separate `cloud` console (`cloud cost`, `cloud add-node`, `cloud remove-node`, `cloud list-nodes`), since kubectl has no such commands.
 
@@ -11,6 +11,10 @@ The terminal only accepts real `kubectl` commands, with real flags and output co
 - **Practitioner** (6 missions): everyday intermediate kubectl: Jobs (`create job`), CronJobs (`create cronjob`, `--from=cronjob/`, `patch`), labels & selectors (`label`, `set selector`, `--show-labels`, `-l`), requests/limits (`set resources`, OOMKilled, Insufficient cpu), debugging (`exec`, `port-forward`, `--target-port`), and `rollout pause|resume|restart`.
 
 - **Elite** (6 missions): advanced kubectl. Structured output (`-o json|yaml|name|jsonpath|custom-columns`, `--sort-by`, `--field-selector`), bulk deletes by selector, `--current-replicas` scale guards, `rollout history --revision` / `undo --to-revision`, forensics (`events --types --for`, `logs -l|--previous|--tail|deployment/NAME`), capacity analysis (`top nodes`, `top pods --sort-by`), and a final incident.
+
+- **The Hard Way** (12 missions): [Kubernetes The Hard Way](https://github.com/kelseyhightower/kubernetes-the-hard-way) as a game. The terminal becomes a Linux shell on four machines (`jumpbox`, `server`, `node-0`, `node-1`): clone the guide, download the binaries, set up SSH and DNS, build a CA and eight certificates with `openssl`, write kubeconfigs, encrypt Secrets, run etcd, the API server, controller manager and scheduler as systemd services, turn two blank machines into nodes (containerd, kubelet, kube-proxy, CNI), add pod routes, and smoke-test the result. Services only start if the files really are where the guide puts them, so a missing certificate, a forgotten `swapoff` or a wrong node certificate fails with a realistic message in `systemctl status` / `journalctl -u`. The shell supports variables, `$(...)`, pipes, redirects, globs, brace expansion and `for` / `while read` loops, so the guide's commands work as typed (no heredocs or interactive editors).
+
+**Namespaces and system pods**: `kubectl get namespaces`, `-n NAMESPACE` and `-A` / `--all-namespaces` work. The cluster has `kube-system` with CoreDNS, etcd, the API server, scheduler, controller manager, and one kube-proxy and CNI pod per node (plus the `kube-dns` Service and DaemonSets), which never compete with your workloads for slots. `describe` and `logs` work on them; creating workloads in other namespaces is not simulated.
 
 **Profit Mode** (6 missions, its own button on the title screen): the same cluster, but every pod and node costs money and every served request earns it. Cost basics, draining nodes, cluster capacity, Secrets, spot nodes, and a final exam.
 

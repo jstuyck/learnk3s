@@ -10,6 +10,8 @@ export interface ShellOptions {
   prompt: HTMLElement;
   form: HTMLFormElement;
   getState(): State | null;
+  /** the prompt text (the Hard Way shows root@host:dir#) */
+  promptText(): string;
   print(lines: Line[]): void;
   clear(): void;
 }
@@ -64,7 +66,7 @@ export function initShell(o: ShellOptions): CommandHistory {
   const rsEnd = (accept: boolean) => {
     if (!rs) return;
     input.value = accept && rs.idx >= 0 ? hist.entries[rs.idx] : rs.saved;
-    rs = null; prompt.textContent = '$';
+    rs = null; prompt.textContent = o.promptText();
   };
 
   input.addEventListener('keydown', e => {

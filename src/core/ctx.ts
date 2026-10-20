@@ -2,7 +2,7 @@
 import type { Deployment, Pod, State } from './types';
 
 export type Kind =
-  | 'pod' | 'deployment' | 'service' | 'node' | 'configmap' | 'secret' | 'hpa' | 'endpoints' | 'job' | 'cronjob' | 'all';
+  | 'pod' | 'deployment' | 'service' | 'node' | 'configmap' | 'secret' | 'hpa' | 'endpoints' | 'job' | 'cronjob' | 'namespace' | 'daemonset' | 'all';
 
 export const KIND: Record<string, Kind> = {
   po: 'pod', pod: 'pod', pods: 'pod',
@@ -15,6 +15,8 @@ export const KIND: Record<string, Kind> = {
   ep: 'endpoints', endpoints: 'endpoints',
   job: 'job', jobs: 'job',
   cj: 'cronjob', cronjob: 'cronjob', cronjobs: 'cronjob',
+  ns: 'namespace', namespace: 'namespace', namespaces: 'namespace',
+  ds: 'daemonset', daemonset: 'daemonset', daemonsets: 'daemonset',
   all: 'all',
 };
 

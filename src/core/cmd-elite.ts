@@ -5,6 +5,7 @@ import { KIND, strFlag } from './ctx';
 import { ageStr, depRows, matchesSelector, nodeRows, podIp, podRows, svcRows, topNodeRows, topRows } from './format';
 import { ownedPods, readyCount, terminate, tplOf } from './sim';
 import { logsOfJob } from './cmd-batch';
+import { systemPodCmd } from './system';
 import type { ClusterNode, Deployment, Line, Pod, Service, State } from './types';
 
 type Doc = Record<string, unknown>;
@@ -75,7 +76,7 @@ function serviceDoc(_s: State, v: Service): Doc {
   return {
     apiVersion: 'v1', kind: 'Service',
     metadata: { name: v.name, namespace: 'default', creationTimestamp: stamp(v.createdAt) },
-    spec: { type: 'ClusterIP', clusterIP: v.ip, selector: v.selector, ports: [{ port: v.port, targetPort: v.targetPort, protocol: 'TCP' }] },
+    spec: { type: v.nodePort ? 'NodePort' : 'ClusterIP', clusterIP: v.ip, selector: v.selector, ports: [pruneEmpty({ port: v.port, targetPort: v.targetPort, nodePort: v.nodePort, protocol: 'TCP' })] },
     status: { loadBalancer: {} },
   };
 }
@@ -414,6 +415,7 @@ function podLog(p: Pod): Line[] {
 export function logsCmd(c: Ctx): void {
   const { s, pos, flags } = c;
   const target = pos[0];
+  if (systemPodCmd(c, 'logs', target)) return;
   const selector = strFlag(flags.selector);
   const tailRaw = strFlag(flags.tail);
   const tail = tailRaw === undefined ? undefined : Number(tailRaw);
@@ -442,6 +444,7 @@ export function logsCmd(c: Ctx): void {
   for (const p of pods) {
     if (isCrashed(p)) s.flags.inspectedCrash = true;
     if (p.owner?.startsWith('job/')) s.flags.readJobLogs = true;
+    if (p.phase === 'Running') s.flags.readPodLogs = true;
     if (flags.previous) {
       if (!isCrashed(p) && p.restarts === 0) { c.err('Error from server (BadRequest): previous terminated container "' + p.app + '" in pod "' + p.name + '" not found'); continue; }
       s.flags.usedPrevious = true;

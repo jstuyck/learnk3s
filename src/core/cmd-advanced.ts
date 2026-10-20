@@ -216,6 +216,7 @@ export function execCmd(c: Ctx): void {
       r.out.forEach(l => c.say(l, r.code ? 'err' : ''));
       break;
     }
+    case 'nginx': c.say(args[0] === '-v' ? 'nginx version: nginx/1.27.4' : 'nginx: supported here: nginx -v'); break;
     case 'nslookup': {
       const host = args[0] ?? '';
       const svc = hostService(c, host);

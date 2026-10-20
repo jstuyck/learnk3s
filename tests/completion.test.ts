@@ -18,7 +18,7 @@ describe('Tab completion', () => {
   });
 
   it('completes resource kinds and their aliases', () => {
-    expect(opts('pods', 'kubectl get ')).toEqual(['pods', 'deployments', 'services', 'nodes', 'configmaps', 'secrets', 'hpa', 'endpoints', 'jobs', 'cronjobs', 'all']);
+    expect(opts('pods', 'kubectl get ')).toEqual(['pods', 'deployments', 'services', 'nodes', 'configmaps', 'secrets', 'hpa', 'endpoints', 'jobs', 'cronjobs', 'namespaces', 'daemonsets', 'all']);
     expect(opts('pods', 'kubectl get po')).toEqual(['pods', 'po']);
     expect(opts('pods', 'kubectl describe sec')).toEqual(['secret']);
   });

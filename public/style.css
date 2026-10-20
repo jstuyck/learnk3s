@@ -139,8 +139,8 @@ h1 { font-size: clamp(2.4rem, 7vw, 3.6rem); margin: 10px 0 4px; letter-spacing: 
 }
 
 /* campaign tabs, economy HUD */
-.tabs { max-width: 860px; margin: 18px auto 0; padding: 0 16px; display: flex; gap: 10px; }
-.tab { flex: 1; text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; font: inherit; cursor: pointer; display: grid; }
+.tabs { max-width: 1000px; margin: 18px auto 0; padding: 0 16px; display: flex; flex-wrap: wrap; gap: 10px; }
+.tab { flex: 1 1 200px; text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; font: inherit; cursor: pointer; display: grid; }
 .tab span { color: var(--dim); font-size: .82rem; }
 .tab:hover { border-color: #36497c; }
 .tab.active { border-color: var(--accent2); background: var(--panel2); box-shadow: 0 0 0 2px rgba(91,141,255,.2); }

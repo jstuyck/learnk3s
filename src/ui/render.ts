@@ -2,6 +2,8 @@
 // Canvas renderer. Logical size 960x500; the canvas is scaled by CSS.
 // ---------------------------------------------------------------------------
 import { CREATE_TIME, T_POD, T_SVC, endpoints, readyCount, trafficRate, usedSlots } from '../core/sim';
+import { apiserverUp, unitActive } from '../core/hardway';
+import type { Machine } from '../core/hardway';
 import type { ClusterNode, Pod, Request, Service, State } from '../core/types';
 
 export const VW = 960;
@@ -68,6 +70,7 @@ export function draw(c: Ctx, s: State, selectedId: number | null): void {
   c.strokeStyle = 'rgba(80,110,190,.07)'; c.lineWidth = 1;
   for (let x = 0; x < VW; x += 32) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, VH); c.stroke(); }
   for (let y = 0; y < VH; y += 32) { c.beginPath(); c.moveTo(0, y); c.lineTo(VW, y); c.stroke(); }
+  if (s.level.hardway === 'machines' && s.hw) { drawHardWay(c, s); return; }
 
   drawControlPlane(c, s);
   drawUsers(c, s);
@@ -314,4 +317,68 @@ export function podAt(s: State, x: number, y: number): Pod | null {
     if (r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return p;
   }
   return null;
+}
+
+// ---- The Hard Way: the four lab machines --------------------------------------------------------------------------------
+type Check = [label: string, ok: boolean];
+
+function machineChecks(s: State, m: Machine): Check[] {
+  const f = (p: string) => !!m.files[p];
+  if (m.name === 'jumpbox') {
+    return [['SSH key pair', s.hw!.keyGenerated], ['repository cloned', f('/root/kubernetes-the-hard-way/ca.conf')], ['kubectl installed', !!m.files['/usr/local/bin/kubectl']?.exec],
+      ['certificate authority', f('/root/kubernetes-the-hard-way/ca.crt')], ['kubeconfig for kubectl', f('/root/.kube/config')]];
+  }
+  if (m.name === 'server') {
+    return [['SSH access', m.hasKey], ['hostname set', m.hostname === 'server'], ['certificates in place', f('/var/lib/kubernetes/kube-api-server.crt')], ['encryption config', f('/var/lib/kubernetes/encryption-config.yaml')],
+      ['pod routes (' + m.routes.length + '/2)', m.routes.length >= 2]];
+  }
+  return [['SSH access', m.hasKey], ['hostname set', m.hostname === m.name], ['swap off', !m.swap], ['kubelet certificate', f('/var/lib/kubelet/kubelet.crt')], ['pod network ready', f('/etc/cni/net.d/10-bridge.conf') && m.modules.includes('br_netfilter')],
+    ['route to other node', m.routes.length >= 1]];
+}
+
+function unitsOf(m: Machine): string[] {
+  return m.name === 'server' ? ['etcd', 'kube-apiserver', 'kube-controller-manager', 'kube-scheduler'] : m.name.startsWith('node') ? ['containerd', 'kubelet', 'kube-proxy'] : [];
+}
+
+function drawHardWay(c: Ctx, s: State): void {
+  const hw = s.hw!;
+  const names = ['jumpbox', 'server', 'node-0', 'node-1'];
+  const gap = 12, w = (VW - 24 - gap * 3) / 4, top = 38, h = VH - top - 22;
+  txt(c, 'Kubernetes The Hard Way', 14, 22, { size: 14, bold: true, color: '#b9ccff' });
+  txt(c, 'You are on: ' + hw.active + (hw.stack.length ? '   (exit to go back)' : ''), VW - 14, 22, { size: 12, align: 'right', color: '#f5c542', mono: true });
+  c.setLineDash([4, 6]); c.strokeStyle = 'rgba(120,150,230,.3)'; c.lineWidth = 1.5;
+  for (let i = 1; i < 4; i++) { c.beginPath(); c.moveTo(12 + (w + gap) * i - gap, top + 30); c.lineTo(12 + (w + gap) * i, top + 30); c.stroke(); }
+  c.setLineDash([]);
+  names.forEach((n, i) => {
+    const m = hw.machines[n];
+    const x = 12 + i * (w + gap);
+    const here = hw.active === n;
+    rr(c, x, top, w, h, 12);
+    c.fillStyle = here ? '#14224a' : '#101a36'; c.fill();
+    c.strokeStyle = here ? '#5b8dff' : '#2c3f72'; c.lineWidth = here ? 2.5 : 1.5; c.stroke();
+    txt(c, n, x + 12, top + 24, { size: 16, bold: true });
+    txt(c, n === 'jumpbox' ? 'admin workstation' : n === 'server' ? 'control plane' : 'worker, pods ' + m.subnet, x + 12, top + 41, { size: 10, color: '#8da0c8' });
+    txt(c, 'hostname ' + m.hostname, x + 12, top + 60, { size: 11, mono: true, color: m.hostname === n || n === 'jumpbox' ? '#9fb6ee' : '#f5c542' });
+    txt(c, m.ip, x + 12, top + 75, { size: 11, mono: true, color: '#8da0c8' });
+    let y = top + 100;
+    const units = unitsOf(m);
+    if (units.length) {
+      txt(c, 'SERVICES', x + 12, y, { size: 9, bold: true, color: '#8da0c8' }); y += 16;
+      for (const u of units) {
+        const st = m.units[u];
+        const col = st?.active ? '#3ddc84' : st?.journal.length ? '#ff5c5c' : '#3a4a78';
+        c.beginPath(); c.arc(x + 18, y - 4, 5, 0, 7); c.fillStyle = col; c.fill();
+        txt(c, clip(u, Math.floor((w - 40) / 6.6)), x + 30, y, { size: 11, mono: true, color: st?.active ? '#d9e4ff' : '#8da0c8' });
+        y += 18;
+      }
+      y += 8;
+    }
+    txt(c, 'CHECKLIST', x + 12, y, { size: 9, bold: true, color: '#8da0c8' }); y += 16;
+    for (const [label, ok] of machineChecks(s, m)) {
+      txt(c, ok ? '✓' : '·', x + 14, y, { size: 12, bold: true, color: ok ? '#3ddc84' : '#586a99' });
+      txt(c, clip(label, Math.floor((w - 40) / 6.2)), x + 30, y, { size: 11, color: ok ? '#d9e4ff' : '#8da0c8' });
+      y += 18;
+    }
+  });
+  txt(c, apiserverUp(hw) ? 'API server is answering on server.kubernetes.local:6443' : unitActive(hw, 'server', 'etcd') ? 'etcd is up; the control plane is not' : 'No cluster yet', VW / 2, VH - 6, { size: 11, align: 'center', color: apiserverUp(hw) ? '#3ddc84' : '#8da0c8' });
 }

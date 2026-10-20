@@ -1,0 +1,186 @@
+// Namespaces and the cluster's own pods (kube-system). System pods are derived from the nodes on demand, so they never
+// compete with workloads for slots; they exist so that `kubectl get pods -A`, `-n kube-system` and `get ns` look real.
+import type { Ctx } from './ctx';
+import { strFlag } from './ctx';
+import { depRows, fmtAge, podRows, svcRows } from './format';
+import type { State } from './types';
+
+type Row = (string | number)[];
+
+export const BASE_NAMESPACES = ['default', 'kube-node-lease', 'kube-public', 'kube-system'];
+const CLUSTER_AGE = 3 * 86400 + 4 * 3600;
+
+export interface SysPod {
+  name: string;
+  app: string;
+  status: string;
+  ready: string;
+  restarts: number;
+  node: string;
+  image: string;
+  /** Deployment / DaemonSet that owns it, or null for a static pod */
+  owner: string | null;
+  labels: string;
+  logs: string[];
+}
+
+const hash = (text: string, len = 5): string => {
+  let h = 7;
+  for (const ch of text) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const a = 'bcdfghjklmnpqrstvwxz2456789';
+  let r = '';
+  for (let i = 0; i < len; i++) { r += a[h % a.length]; h = Math.floor(h / a.length) + i * 7 + 3; }
+  return r;
+};
+
+/** The pods Kubernetes itself runs in kube-system (none in the Hard Way: there, the components are systemd services). */
+export function systemPods(s: State): SysPod[] {
+  if (s.level.hardway) return [];
+  const nodes = s.nodes.filter(n => s.t >= n.bootUntil);
+  if (!nodes.length) return [];
+  const cp = s.nodes[0].name;
+  const pods: SysPod[] = [];
+  const up = (node: string) => { const n = s.nodes.find(x => x.name === node); return !!n && !n.down; };
+  const add = (p: Omit<SysPod, 'status' | 'ready' | 'restarts'>) => pods.push({ ...p, status: up(p.node) ? 'Running' : 'Unknown', ready: up(p.node) ? '1/1' : '0/1', restarts: 0 });
+  nodes.slice(0, 2).forEach((n, i) => add({
+    name: 'coredns-7c65d6cfc9-' + hash('coredns' + i), app: 'coredns', node: n.name, image: 'registry.k8s.io/coredns/coredns:v1.11.3',
+    owner: 'coredns', labels: 'k8s-app=kube-dns',
+    logs: ['.:53', '[INFO] plugin/reload: Running configuration SHA512 = 591cf328cccc12bc490481273e738df59329c62c0b729d94e8b61db9961c2fa5f046dd37f1cf888b953814040d180f52594972691cd6ff41be96639138a43908', 'CoreDNS-1.11.3', 'linux/amd64, go1.21.11, a6338e9'],
+  }));
+  for (const [app, image, flags] of [
+    ['etcd', 'registry.k8s.io/etcd:3.5.15-0', '"serving metrics on 127.0.0.1:2381"'],
+    ['kube-apiserver', 'registry.k8s.io/kube-apiserver:v1.30.2', '"Serving securely on [::]:6443"'],
+    ['kube-controller-manager', 'registry.k8s.io/kube-controller-manager:v1.30.2', '"Started controller" controller="deployment-controller"'],
+    ['kube-scheduler', 'registry.k8s.io/kube-scheduler:v1.30.2', '"Starting Kubernetes Scheduler" version="v1.30.2"'],
+  ] as const) {
+    add({ name: app + '-' + cp, app, node: cp, image, owner: null, labels: 'component=' + app + ',tier=control-plane', logs: ['I1019 06:51:02.114 1 ' + flags] });
+  }
+  for (const n of nodes) {
+    add({ name: 'kube-proxy-' + hash('proxy' + n.name), app: 'kube-proxy', node: n.name, image: 'registry.k8s.io/kube-proxy:v1.30.2', owner: 'kube-proxy', labels: 'k8s-app=kube-proxy', logs: ['I1019 06:51:07.201 1 server_linux.go:69] "Using iptables proxy"', 'I1019 06:51:07.388 1 shared_informer.go:320] Caches are synced for service config'] });
+    add({ name: 'kindnet-' + hash('kindnet' + n.name), app: 'kindnet', node: n.name, image: 'docker.io/kindest/kindnetd:v20240813', owner: 'kindnet', labels: 'app=kindnet', logs: ['I1019 06:51:09.870 1 main.go:299] Handling node with IPs: {10.244.0.1}'] });
+  }
+  return pods;
+}
+
+export const namespaces = (s: State): string[] => BASE_NAMESPACES.concat(s.namespaces ?? []).sort((a, b) => a.localeCompare(b));
+
+const age = (s: State): string => fmtAge(s.t + CLUSTER_AGE);
+const sysRows = (s: State): Row[] => systemPods(s).map(p => ['kube-system', p.name, p.ready, p.status, p.restarts, age(s)]);
+
+const depSys = (s: State): Row[] => (systemPods(s).some(p => p.owner === 'coredns')
+  ? [['kube-system', 'coredns', systemPods(s).filter(p => p.app === 'coredns' && p.status === 'Running').length + '/' + systemPods(s).filter(p => p.app === 'coredns').length, systemPods(s).filter(p => p.app === 'coredns').length, systemPods(s).filter(p => p.app === 'coredns' && p.status === 'Running').length, age(s)]]
+  : []);
+const dsSys = (s: State): Row[] => ['kube-proxy', 'kindnet'].filter(a => systemPods(s).some(p => p.app === a)).map(a => {
+  const n = systemPods(s).filter(p => p.app === a);
+  const r = n.filter(p => p.status === 'Running').length;
+  return ['kube-system', a, n.length, n.length, r, n.length, r, a === 'kube-proxy' ? 'kubernetes.io/os=linux' : '<none>', age(s)];
+});
+const svcSys = (s: State): Row[] => (systemPods(s).length ? [['kube-system', 'kube-dns', 'ClusterIP', '10.96.0.10', '<none>', '53/UDP,53/TCP,9153/TCP', age(s)]] : []);
+
+/** Prefix every data row of a user table with its namespace column. */
+const prefix = (rows: Row[], ns: string): Row[] => rows.slice(1).map(r => [ns, ...r]);
+
+/** kubectl get with -n / -A, plus namespaces and daemonsets. Returns true when it handled the command. */
+export function getNamespaced(c: Ctx, kind: string): boolean {
+  const { s, flags, pos } = c;
+  const all = !!flags['all-namespaces'];
+  const ns = strFlag(flags.namespace) ?? 'default';
+  const emit = (head: Row, rows: Row[]) => {
+    if (!rows.length) c.say(all ? 'No resources found' : 'No resources found in ' + ns + ' namespace.', 'dim');
+    else c.emit([head, ...rows]);
+  };
+  if (kind === 'namespace') {
+    const name = pos[1];
+    const list = namespaces(s).filter(n => !name || n === name);
+    if (name && !list.length) { c.notFound('namespace', name); return true; }
+    c.emit([['NAME', 'STATUS', 'AGE'] as Row].concat(list.map(n => [n, 'Active', BASE_NAMESPACES.includes(n) ? age(s) : '1m'])));
+    s.flags.listedNamespaces = true;
+    return true;
+  }
+  if (!all && ns === 'default' && kind !== 'daemonset') return false;
+  if (ns !== 'default' && !all && !namespaces(s).includes(ns)) { c.err('Error from server (NotFound): namespaces "' + ns + '" not found'); return true; }
+  const sys = all || ns === 'kube-system';
+  const mine = all || ns === 'default';
+  s.flags.usedAllNamespaces = s.flags.usedAllNamespaces || all;
+  if (sys) s.flags.listedSystemPods = s.flags.listedSystemPods || (kind === 'pod' || kind === 'all');
+  const podHead: Row = ['NAMESPACE', 'NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE'];
+  const depHead: Row = ['NAMESPACE', 'NAME', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'AGE'];
+  const svcHead: Row = ['NAMESPACE', 'NAME', 'TYPE', 'CLUSTER-IP', 'EXTERNAL-IP', 'PORT(S)', 'AGE'];
+  const dsHead: Row = ['NAMESPACE', 'NAME', 'DESIRED', 'CURRENT', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'NODE SELECTOR', 'AGE'];
+  const strip = (rows: Row[]): Row[] => (all ? rows : rows.map(r => r.slice(1)));
+  const head = (h: Row): Row => (all ? h : h.slice(1));
+  const selector = strFlag(flags.selector);
+  const podData = (): Row[] => [
+    ...(mine ? prefix(podRows(s, false, selector), 'default') : []),
+    ...(sys && !selector ? sysRows(s) : []),
+  ];
+  const lines: { title?: string; head: Row; rows: Row[] }[] = [];
+  if (kind === 'pod' || kind === 'all') lines.push({ title: 'pod', head: head(podHead), rows: strip(podData()) });
+  if (kind === 'service' || kind === 'all') lines.push({ title: 'service', head: head(svcHead), rows: strip([...(mine ? prefix(svcRows(s), 'default') : []), ...(sys ? svcSys(s) : [])]) });
+  if (kind === 'daemonset' || kind === 'all') lines.push({ title: 'daemonset', head: head(dsHead), rows: strip(sys ? dsSys(s) : []) });
+  if (kind === 'deployment' || kind === 'all') lines.push({ title: 'deployment', head: head(depHead), rows: strip([...(mine ? prefix(depRows(s), 'default') : []), ...(sys ? depSys(s) : [])]) });
+  if (!lines.length) {
+    if (ns !== 'default' && !all) { c.say('No resources found in ' + ns + ' namespace.', 'dim'); return true; }
+    return false;   // kinds we do not model per namespace: classic output
+  }
+  lines.forEach((l, i) => {
+    if (kind === 'all' && !l.rows.length) return;
+    if (kind === 'all' && i > 0) c.say('');
+    if (kind === 'all') c.say(l.title + 's', 'dim');
+    emit(l.head, l.rows);
+  });
+  return true;
+}
+
+const findSys = (s: State, name: string): SysPod | undefined => systemPods(s).find(p => p.name === name);
+
+/** describe / logs for pods in kube-system. Returns true when the command targeted a non-default namespace. */
+export function systemPodCmd(c: Ctx, what: 'describe' | 'logs', name: string | undefined): boolean {
+  const { s, flags } = c;
+  const ns = strFlag(flags.namespace);
+  if (!ns || ns === 'default') return false;
+  if (ns !== 'kube-system') {
+    if (!namespaces(s).includes(ns)) c.err('Error from server (NotFound): namespaces "' + ns + '" not found');
+    else c.notFound('pod', name ?? '');
+    return true;
+  }
+  const p = name ? findSys(s, name) : undefined;
+  if (!p) { c.notFound('pod', name ?? ''); return true; }
+  s.flags.inspectedSystemPod = true;
+  if (what === 'logs') { p.logs.forEach(l => c.say(l)); return true; }
+  [
+    'Name:             ' + p.name,
+    'Namespace:        kube-system',
+    'Node:             ' + p.node,
+    'Labels:           ' + p.labels,
+    'Status:           ' + p.status,
+    'Controlled By:    ' + (p.owner ? (p.owner === 'coredns' ? 'ReplicaSet/' : 'DaemonSet/') + p.owner : 'Node/' + p.node + '  (static pod)'),
+    'Image:            ' + p.image,
+    'Restart Count:    ' + p.restarts,
+    'Priority Class:   system-cluster-critical',
+  ].forEach(l => c.say(l));
+  c.say('Events:  <none>');
+  return true;
+}
+
+/** create / delete namespace. Returns true when handled. */
+export function namespaceCmd(c: Ctx, verb: 'create' | 'delete', name: string | undefined): void {
+  const { s } = c;
+  if (!name) { c.err('error: exactly one NAME is required, got 0'); return; }
+  s.namespaces ??= [];
+  if (verb === 'create') {
+    if (namespaces(s).includes(name)) { c.err('Error from server (AlreadyExists): namespaces "' + name + '" already exists'); return; }
+    if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name)) { c.err('The Namespace "' + name + '" is invalid: metadata.name: a lowercase RFC 1123 label is required'); return; }
+    s.namespaces.push(name);
+    s.flags.createdNamespace = true;
+    c.ok('namespace/' + name + ' created');
+    return;
+  }
+  if (BASE_NAMESPACES.includes(name)) { c.err('Error from server (Forbidden): namespaces "' + name + '" is forbidden: this namespace may not be deleted'); return; }
+  if (!s.namespaces.includes(name)) { c.notFound('namespace', name); return; }
+  s.namespaces = s.namespaces.filter(n => n !== name);
+  c.ok('namespace "' + name + '" deleted');
+}
+
+/** The "tip" shown when a workload command targets a namespace other than default. */
+export const NS_NOTE = 'error: this simulator runs workloads in the default namespace only (you can still look at others with get, describe and logs)';

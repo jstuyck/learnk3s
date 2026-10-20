@@ -9,6 +9,8 @@ import { deleteBulk, eventsCmd, getStructured, logsCmd, rolloutRevisions, topCmd
 import type { Ctx, FlagValue, Out } from './ctx';
 import { KIND, NONE, parseArgs, parseLabels, resRef, splitWords, strFlag } from './ctx';
 import { burnRate, profit, revenueRate } from './economy';
+import { runHw } from './hwshell';
+import { getNamespaced, namespaceCmd, namespaces, NS_NOTE, systemPodCmd } from './system';
 import { ageStr, depRows, endpointRows, labelText, nodeRows, podRows, podStatus, svcRows, table } from './format';
 import {
   addDeployment, addService, depOf, endpoints, makeNode, makePod, NODE_CPU, ownedPods, planCommand, readyCount, recordRevision, terminate, tplOf,
@@ -159,7 +161,12 @@ export const GAME_HELP: string[] = [
   'Known images: ' + Object.keys(IMAGES).join(', '),
 ];
 
+/** Run one terminal line. Hard Way missions have a shell on the lab machines; all others have kubectl. */
 export function runCommand(s: State, line: string): Line[] {
+  return s.hw ? runHw(s, line, runPlain) : runPlain(s, line);
+}
+
+export function runPlain(s: State, line: string): Line[] {
   const lines: Line[] = [];
   const out: Out = {
     say: (t, c) => { lines.push({ t, c: c || '' }); },
@@ -230,10 +237,20 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
     return;
   }
 
+  const ns = strFlag(flags.namespace);
+  const nsKind = KIND[pos[0]];
+  const touchesOtherNs = !!ns && ns !== 'default';
+  if (touchesOtherNs && ['create', 'run', 'scale', 'expose', 'autoscale', 'set', 'rollout', 'label', 'patch', 'exec', 'port-forward', 'cordon', 'uncordon', 'drain', 'delete'].includes(verb)
+    && !(verb === 'create' && nsKind === 'namespace') && !(verb === 'delete' && nsKind === 'namespace')) {
+    err(NS_NOTE);
+    return;
+  }
+
   switch (verb) {
     case 'get': {
       const kind = pos[0] ? KIND[pos[0]] : undefined;
       if (!kind) { err('error: the server doesn\'t have a resource type "' + (pos[0] || '') + '"  (try pods, deployments, services, nodes)'); break; }
+      if (getNamespaced(c, kind)) break;
       if (getStructured(c, kind)) break;
       if (kind === 'pod' || kind === 'all') {
         s.flags.usedGet = true;
@@ -303,7 +320,9 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
     case 'create': {
       const kind = pos[0] ? KIND[pos[0]] : undefined;
       const name = pos[1];
-      if (kind === 'deployment') {
+      if (kind === 'namespace') {
+        namespaceCmd(c, 'create', name);
+      } else if (kind === 'deployment') {
         const image = strFlag(flags.image);
         if (!name) { err('error: NAME is required'); break; }
         if (!image) { err('error: required flag --image not set'); break; }
@@ -361,7 +380,9 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       if (s.services.some(v => v.name === name)) { err('Error from server (AlreadyExists): services "' + name + '" already exists'); break; }
       const port = flags.port === undefined ? 80 : needNum(flags.port, 1, 65535, 'port'); if (port === null) break;
       const targetPort = flags['target-port'] === undefined ? port : needNum(flags['target-port'], 1, 65535, 'target-port'); if (targetPort === null) break;
-      addService(s, name, selectorLabels, port, targetPort);
+      const created = addService(s, name, selectorLabels, port, targetPort);
+      if (strFlag(flags.type) === 'NodePort') created.nodePort = 30000 + Math.floor(s.rng() * 2767);
+      else if (strFlag(flags.type) && strFlag(flags.type) !== 'ClusterIP') { err('error: --type must be ClusterIP or NodePort in this simulator'); s.services = s.services.filter(v => v !== created); break; }
       ok('service/' + name + ' exposed');
       break;
     }
@@ -454,7 +475,9 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       const r = resRef(pos);
       if (!r || !r.kind || !r.name) { err('usage: kubectl delete pod|deployment|service|hpa NAME'); break; }
       const name = r.name;
-      if (r.kind === 'pod') {
+      if (r.kind === 'namespace') {
+        namespaceCmd(c, 'delete', name);
+      } else if (r.kind === 'pod') {
         const p = findPod(name);
         if (!p || p.phase === 'Terminating') { notFound('pod', name); break; }
         if (p.owner) s.flags.deletedOwned = p.owner; else s.flags.deletedBare = true;
@@ -501,7 +524,13 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       const r = resRef(pos);
       if (!r || !r.kind || !r.name) { err('usage: kubectl describe pod|node|deployment|service NAME'); break; }
       const name = r.name;
-      if (r.kind === 'pod') {
+      if (r.kind === 'namespace') {
+        if (!namespaces(s).includes(name)) { notFound('namespace', name); break; }
+        say('Name:         ' + name); say('Status:       Active');
+        say(name === 'kube-system' ? 'Description:  objects created by the Kubernetes system (control plane add-ons, DNS, proxy)' : 'Description:  <none>');
+      } else if (r.kind === 'pod' && systemPodCmd(c, 'describe', name)) {
+        break;
+      } else if (r.kind === 'pod') {
         const p = findPod(name);
         if (!p) { notFound('pod', name); break; }
         s.flags.describedPod = true;

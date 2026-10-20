@@ -3,6 +3,7 @@
 // No DOM access in here, so it can be tested headlessly.
 // ---------------------------------------------------------------------------
 import { IMAGES, portOf } from '../data/images';
+import { newHardWay } from './hardway';
 import { makeRng } from './rng';
 import { burnRate, profit } from './economy';
 import type {
@@ -32,6 +33,7 @@ export function newState(level: Level, seed: number = Date.now()): State {
     acc: { spawn: 0, recon: 0, obj: 0, hpa: 0 },
     evFired: {}, evArmed: {}, banner: null, cpPulse: 0, outcome: null, failReason: '',
   };
+  if (level.hardway) s.hw = newHardWay();
   for (let i = 0; i < level.nodes; i++) s.nodes.push(makeNode('node-' + (i + 1), level.slots, false, 0));
   level.setup?.(s);
   settle(s);
