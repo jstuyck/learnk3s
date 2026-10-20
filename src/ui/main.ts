@@ -134,6 +134,7 @@ function startLevel(i: number): void {
   curLevel = i;
   const L: Level = campaign.levels[i];
   S = newState(L);
+  $('end-card').style.display = 'none';
   outcomeShown = false; shownDone = -1; selectedId = null; speed = 1; paused = true;
   setView('cluster');
   document.documentElement.style.setProperty('--term-h', L.hardway ? '340px' : '230px');
@@ -198,14 +199,26 @@ function renderObjectives(): void {
 const starHtml = (n: number): string =>
   '<div class="bigstars">' + [1, 2, 3].map(k => '<span class="' + (k <= n ? '' : 'off') + '">★</span>').join('') + '</div>';
 
+/** The mission is decided: record it and show a banner. The results popup opens only when asked for, so it never hides command output. */
 function endLevel(): void {
   if (!S) return;
   outcomeShown = true;
   const L = S.level;
+  const won = S.outcome === 'win';
+  if (won) { recordWin(save, L.id, calcStars(S), L.econ ? profit(S) : undefined); persist(); }
+  const last = curLevel === campaign.levels.length - 1;
+  $('end-card').style.display = '';
+  $('end-h').textContent = won ? 'Mission complete' : 'Mission failed';
+  $('end-text').textContent = won ? 'Every objective is done. Read the output at your own pace.' : S.failReason;
+  $('end-next').style.display = won && !last ? '' : 'none';
+  termPrint([{ t: won ? '★ Mission complete! Open "View results" on the right when you are ready.' : '✖ Mission failed: ' + S.failReason, c: won ? 'ok' : 'err' }]);
+}
+
+function openResults(): void {
+  if (!S) return;
+  const L = S.level;
   if (S.outcome === 'win') {
     const st = calcStars(S);
-    recordWin(save, L.id, st, L.econ ? profit(S) : undefined);
-    persist();
     const last = curLevel === campaign.levels.length - 1;
     const detail = L.econ
       ? 'Profit $' + profit(S).toFixed(2) + ' &middot; ' + S.stats.served + ' served, ' + S.stats.failed + ' failed'
@@ -339,6 +352,8 @@ function setView(v: View): void {
 }
 $('btn-view').addEventListener('click', () => setView(view === 'namespaces' ? 'cluster' : 'namespaces'));
 $('btn-brief').addEventListener('click', openMission);
+$('end-view').addEventListener('click', openResults);
+$('end-next').addEventListener('click', () => startLevel(curLevel + 1));
 $('tut-run').addEventListener('click', () => {
   const step = S?.level.tutorial?.[S.tutStep ?? 0];
   if (step && S && !S.outcome) { paused = false; submitCommand(step.cmd); }
