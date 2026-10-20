@@ -1,4 +1,6 @@
-# Kube Quest
+# learnk3s
+
+**Play it online: https://jstuyck.github.io/learnk3s/**
 
 A 2D browser game that teaches Kubernetes. Two campaigns, a simulated `kubectl` terminal with Tab completion, history and Ctrl+R.
 
