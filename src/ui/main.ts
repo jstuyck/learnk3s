@@ -137,7 +137,7 @@ function startLevel(i: number): void {
   $('end-card').style.display = 'none';
   outcomeShown = false; shownDone = -1; selectedId = null; speed = 1; paused = true;
   setView('cluster');
-  document.documentElement.style.setProperty('--term-h', L.hardway ? '340px' : '230px');
+  document.documentElement.style.setProperty('--term-h', L.hardway ? 'clamp(340px, 50vh, 680px)' : 'clamp(300px, 42vh, 560px)');
   $('term-out').innerHTML = '';
   termPrint([{ t: 'Mission ' + (i + 1) + ': ' + L.title + '   (type "help" for commands, Tab to complete)', c: 'dim' }]);
   refreshPrompt();
