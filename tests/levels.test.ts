@@ -11,11 +11,12 @@ describe('campaign data', () => {
   });
 
   it('has the expected campaigns', () => {
-    expect(CAMPAIGNS.map(c => c.id)).toEqual(['rookie', 'practitioner', 'profit']);
-    expect(CAMPAIGNS.map(c => c.mode)).toEqual(['campaign', 'campaign', 'profit']);
+    expect(CAMPAIGNS.map(c => c.id)).toEqual(['rookie', 'practitioner', 'elite', 'profit']);
+    expect(CAMPAIGNS.map(c => c.mode)).toEqual(['campaign', 'campaign', 'campaign', 'profit']);
     expect(CAMPAIGNS[0].levels).toHaveLength(8);
     expect(CAMPAIGNS[1].levels).toHaveLength(6);
     expect(CAMPAIGNS[2].levels).toHaveLength(6);
+    expect(CAMPAIGNS[3].levels).toHaveLength(6);
   });
 
   describe.each(ALL_LEVELS.map(l => [l.id, l] as const))('%s', (_id, L) => {
@@ -70,6 +71,7 @@ describe('campaign data', () => {
   it('only Profit Mode has money', () => {
     expect(CAMPAIGNS[0].levels.some(l => l.econ)).toBe(false);
     expect(CAMPAIGNS[1].levels.some(l => l.econ)).toBe(false);
-    expect(CAMPAIGNS[2].levels.every(l => l.econ)).toBe(true);
+    expect(CAMPAIGNS[2].levels.some(l => l.econ)).toBe(false);
+    expect(CAMPAIGNS[3].levels.every(l => l.econ)).toBe(true);
   });
 });

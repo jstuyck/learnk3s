@@ -15,16 +15,22 @@ const ALIASES = ['po', 'deploy', 'svc', 'cm', 'no', 'ep', 'cj'];
 const FLAGS: Record<string, string[]> = {
   run: ['--image=', '--labels=app=', '--restart=Never'],
   create: ['--image=', '--replicas=', '--from-literal=', '--schedule=', '--from=cronjob/'],
-  scale: ['--replicas='],
   expose: ['--port=', '--target-port=', '--name='],
   autoscale: ['--min=', '--max=', '--cpu-percent='],
   set: ['--from=configmap/', '--from=secret/', '--requests=cpu=', '--limits=memory='],
   label: ['--overwrite', '--selector='],
   patch: ['--patch='],
-  get: ['--output=', '--selector=', '--show-labels'],
+  get: ['--output=', '--selector=', '--show-labels', '--sort-by=', '--field-selector='],
+  delete: ['--selector=', '--all', '--field-selector='],
+  scale: ['--replicas=', '--current-replicas='],
+  rollout: ['--revision=', '--to-revision='],
+  logs: ['--previous', '--tail=', '--selector='],
+  events: ['--types=Warning', '--for=pod/'],
+  top: ['--sort-by=cpu', '--sort-by=memory'],
   drain: ['--ignore-daemonsets'],
 };
 const ANY_VERB_FLAGS = ['--help'];
+const OUTPUTS = ['wide', 'name', 'json', 'yaml', 'jsonpath=', 'custom-columns='];
 
 export function completeLine(s: State, line: string): Completion {
   const cur = /(\S*)$/.exec(line)![1];
@@ -48,7 +54,7 @@ export function completeLine(s: State, line: string): Completion {
     node: s.nodes.map(n => n.name),
   };
   const last = prev[prev.length - 1];
-  if (last === '-o') return res(pick(['wide']));
+  if (last === '-o') return res(pick(OUTPUTS));
   if (last === '-n') return res(pick(['default']));
 
   if (prev[0] === 'cloud') {
@@ -70,7 +76,7 @@ export function completeLine(s: State, line: string): Completion {
     if (eq < 0) return res(pick((FLAGS[verb] || []).concat(ANY_VERB_FLAGS)));
     const key = cur.slice(0, eq + 1);
     const val = cur.slice(eq + 1);
-    const vals = key === '--output=' ? ['wide'] : key === '--image='
+    const vals = key === '--output=' ? OUTPUTS : key === '--types=' ? ['Warning', 'Normal'] : key === '--sort-by=' && verb === 'top' ? ['cpu', 'memory'] : key === '--image='
       ? Object.keys(IMAGES)
       : key === '--from='
         ? names.configmap.map(n => 'configmap/' + n).concat(names.secret.map(n => 'secret/' + n))
@@ -96,8 +102,9 @@ export function completeLine(s: State, line: string): Completion {
       if (n === 1) return res(kindNames(args[0]));
       return res([]);
     case 'completion': return res(n === 0 ? pick(['bash', 'zsh', 'fish', 'powershell']) : []);
-    case 'top': return res(n === 0 ? pick(['pods']) : []);
-    case 'logs': return res(n === 0 ? pick(names.pod.concat(names.job.map(j => 'job/' + j))) : []);
+    case 'top': return res(n === 0 ? pick(['pods', 'nodes']) : []);
+    case 'events': return res([]);
+    case 'logs': return res(n === 0 ? pick(names.pod.concat(names.job.map(j => 'job/' + j), names.deployment.map(d => 'deployment/' + d))) : []);
     case 'exec': return res(n === 0 ? pick(names.pod) : []);
     case 'port-forward': return res(n === 0 ? pick(names.pod.map(p => 'pod/' + p).concat(names.service.map(v => 'svc/' + v), names.deployment.map(d => 'deployment/' + d))) : []);
     case 'label': return res(n === 0 ? pick(['pods']) : n === 1 ? pick(names.pod) : []);

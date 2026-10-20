@@ -2,13 +2,15 @@
 
 **Play it online: https://jstuyck.github.io/learnk3s/**
 
-A 2D browser game that teaches Kubernetes. Two campaigns, a simulated `kubectl` terminal with Tab completion, history and Ctrl+R.
+A 2D browser game that teaches Kubernetes. Three campaigns, a simulated `kubectl` terminal with Tab completion, history and Ctrl+R.
 
 The terminal only accepts real `kubectl` commands, with real flags and output columns (`kubectl --help` prints the real help). Real commands the simulator does not implement (`apply`, `exec`, ...) say so. Money-related things live in a separate `cloud` console (`cloud cost`, `cloud add-node`, `cloud remove-node`, `cloud list-nodes`), since kubectl has no such commands.
 
 **Campaign mode**
 - **Rookie** (8 missions): pods, deployments, services, scaling, autoscaling, rollouts, ConfigMaps, node failure.
 - **Practitioner** (6 missions): everyday intermediate kubectl: Jobs (`create job`), CronJobs (`create cronjob`, `--from=cronjob/`, `patch`), labels & selectors (`label`, `set selector`, `--show-labels`, `-l`), requests/limits (`set resources`, OOMKilled, Insufficient cpu), debugging (`exec`, `port-forward`, `--target-port`), and `rollout pause|resume|restart`.
+
+- **Elite** (6 missions): advanced kubectl. Structured output (`-o json|yaml|name|jsonpath|custom-columns`, `--sort-by`, `--field-selector`), bulk deletes by selector, `--current-replicas` scale guards, `rollout history --revision` / `undo --to-revision`, forensics (`events --types --for`, `logs -l|--previous|--tail|deployment/NAME`), capacity analysis (`top nodes`, `top pods --sort-by`), and a final incident.
 
 **Profit Mode** (6 missions, its own button on the title screen): the same cluster, but every pod and node costs money and every served request earns it. Cost basics, draining nodes, cluster capacity, Secrets, spot nodes, and a final exam.
 

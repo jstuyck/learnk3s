@@ -283,6 +283,23 @@ export interface Flags {
   setResources?: boolean;
   /** rollouts that started while the Deployment was paused (should stay 0) */
   rolloutWhilePaused?: boolean;
+  /** scale with a --current-replicas precondition that held */
+  guardedScale?: boolean;
+  usedJsonpath?: boolean;
+  usedCustomColumns?: boolean;
+  usedSortBy?: boolean;
+  usedFieldSelector?: boolean;
+  usedOutputName?: boolean;
+  usedJsonYaml?: boolean;
+  /** most pods removed by a single delete command */
+  bulkDeleted?: number;
+  inspectedRevision?: boolean;
+  undoneToRevision?: number;
+  filteredEvents?: boolean;
+  usedLogsSelector?: boolean;
+  usedPrevious?: boolean;
+  usedTopNodes?: boolean;
+  usedTopSort?: boolean;
 }
 
 export interface State {

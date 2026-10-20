@@ -49,7 +49,12 @@ describe('Tab completion', () => {
   });
 
   it('completes -o values and secret subcommands', () => {
-    expect(opts('pods', 'kubectl get pods -o ')).toEqual(['wide']);
+    expect(opts('pods', 'kubectl get pods -o ')).toEqual(['wide', 'name', 'json', 'yaml', 'jsonpath=', 'custom-columns=']);
+    expect(opts('pods', 'kubectl get pods -o j')).toEqual(['json', 'jsonpath=']);
+    expect(opts('pods', 'kubectl top ')).toEqual(['pods', 'nodes']);
+    expect(opts('pods', 'kubectl top pods --sort-by=')).toEqual(['--sort-by=cpu', '--sort-by=memory']);
+    expect(opts('pods', 'kubectl events --types=')).toEqual(['--types=Warning', '--types=Normal']);
+    expect(opts('pods', 'kubectl get pods --sort')).toEqual(['--sort-by=']);
     expect(opts('pods', 'kubectl get pods --output=w')).toEqual(['--output=wide']);
     expect(opts('pods', 'kubectl create secret ')).toEqual(['generic']);
   });

@@ -3,12 +3,13 @@
 // runCommand(state, line) -> lines to print; it mutates the state like the real thing would.
 // ---------------------------------------------------------------------------
 import { IMAGES } from '../data/images';
-import { createCronJobCmd, createJobCmd, deleteCronJobCmd, deleteJobCmd, describeCronJob, describeJob, getCronJobs, getJobs, logsOfJob } from './cmd-batch';
+import { createCronJobCmd, createJobCmd, deleteCronJobCmd, deleteJobCmd, describeCronJob, describeJob, getCronJobs, getJobs } from './cmd-batch';
 import { execCmd, labelCmd, patchCmd, portForwardCmd, rolloutExtra, setResourcesCmd, setSelectorCmd } from './cmd-advanced';
+import { deleteBulk, eventsCmd, getStructured, logsCmd, rolloutRevisions, topCmd } from './cmd-elite';
 import type { Ctx, FlagValue, Out } from './ctx';
 import { KIND, NONE, parseArgs, parseLabels, resRef, splitWords, strFlag } from './ctx';
 import { burnRate, profit, revenueRate } from './economy';
-import { ageStr, depRows, endpointRows, labelText, nodeRows, podRows, podStatus, svcRows, table, topRows } from './format';
+import { ageStr, depRows, endpointRows, labelText, nodeRows, podRows, podStatus, svcRows, table } from './format';
 import {
   addDeployment, addService, depOf, endpoints, makeNode, makePod, NODE_CPU, ownedPods, planCommand, readyCount, recordRevision, terminate, tplOf,
 } from './sim';
@@ -124,18 +125,18 @@ export const USAGE: Record<string, string[]> = {
   expose: ['Expose a resource as a new Kubernetes service.', '', 'Usage:', '  kubectl expose (-f FILENAME | TYPE NAME) [--port=port] [--target-port=port] [--name=name]', '', 'Examples:', '  kubectl expose deployment nginx --port=80 --target-port=8000'],
   run: ['Create and run a particular image in a pod.', '', 'Usage:', '  kubectl run NAME --image=image [--labels="key=value"] [--restart=Never] [-- COMMAND ARGS...]', '', 'Examples:', '  kubectl run nginx --image=nginx', '  kubectl run job-like --image=busybox --restart=Never -- echo hello'],
   set: ['Configure application resources.', '', 'Available Commands:', '  env           Update environment variables on a pod template', '  image         Update the image of a pod template', '  resources     Update resource requests/limits on objects with pod templates', '  selector      Set the selector on a resource', '', 'Usage:', '  kubectl set image deployment/NAME CONTAINER=IMAGE', '  kubectl set env deployment/NAME --from=configmap/NAME|secret/NAME', '  kubectl set resources deployment NAME --requests=cpu=200m --limits=memory=256Mi', '  kubectl set selector service NAME key=value'],
-  get: ['Display one or many resources.', '', 'Usage:', '  kubectl get (TYPE [NAME | -l label]) [flags]', '', 'Types: pods, deployments, services, nodes, configmaps, secrets, hpa, endpoints, jobs, cronjobs, all', '', 'Flags:', '  -o, --output string   Output format. One of: wide', '  -l, --selector string Selector (label query), e.g. app=web', '      --show-labels     When printing, show all labels as the last column'],
-  delete: ['Delete resources by resource and names.', '', 'Usage:', '  kubectl delete (TYPE NAME)', '', 'Examples:', '  kubectl delete pod web', '  kubectl delete deployment web'],
-  rollout: ['Manage the rollout of one or many resources.', '', 'Available Commands:', '  history       View rollout history', '  pause         Mark the provided resource as paused', '  restart       Restart a resource', '  resume        Resume a paused resource', '  status        Show the status of the rollout', '  undo          Undo a previous rollout', '', 'Usage:', '  kubectl rollout SUBCOMMAND deployment/NAME'],
-  scale: ['Set a new size for a deployment.', '', 'Usage:', '  kubectl scale (TYPE NAME) --replicas=COUNT', '', 'Examples:', '  kubectl scale deployment/web --replicas=3'],
+  get: ['Display one or many resources.', '', 'Usage:', '  kubectl get (TYPE [NAME | -l label]) [flags]', '', 'Types: pods, deployments, services, nodes, configmaps, secrets, hpa, endpoints, jobs, cronjobs, all', '', 'Flags:', '  -o, --output string   Output format. One of: wide|name|json|yaml|jsonpath=...|custom-columns=...', '  -l, --selector string Selector (label query), e.g. app=web', '      --field-selector  Filter on fields, e.g. status.phase=Running,spec.nodeName=node-1', '      --sort-by string  JSONPath to sort by, e.g. .metadata.name', '      --show-labels     When printing, show all labels as the last column', '', 'Examples:', "  kubectl get pods -o jsonpath='{.items[*].metadata.name}'", '  kubectl get pods -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName', '  kubectl get pods --sort-by=.status.containerStatuses[0].restartCount'],
+  delete: ['Delete resources by resource and names.', '', 'Usage:', '  kubectl delete (TYPE NAME [NAME...] | TYPE -l label | TYPE --all)', '', 'Examples:', '  kubectl delete pod web', '  kubectl delete deployment web', '  kubectl delete pods -l env=test', '  kubectl delete pods --field-selector=status.phase=Succeeded'],
+  rollout: ['Manage the rollout of one or many resources.', '', 'Available Commands:', '  history       View rollout history', '  pause         Mark the provided resource as paused', '  restart       Restart a resource', '  resume        Resume a paused resource', '  status        Show the status of the rollout', '  undo          Undo a previous rollout', '', 'Usage:', '  kubectl rollout SUBCOMMAND deployment/NAME', '  kubectl rollout history deployment/NAME --revision=N', '  kubectl rollout undo deployment/NAME --to-revision=N'],
+  scale: ['Set a new size for a deployment.', '', 'Usage:', '  kubectl scale (TYPE NAME) --replicas=COUNT [--current-replicas=COUNT]', '', 'Examples:', '  kubectl scale deployment/web --replicas=3'],
   autoscale: ['Creates an autoscaler that automatically chooses and sets the number of pods that run in a Kubernetes cluster.', '', 'Usage:', '  kubectl autoscale (TYPE NAME) [--min=MINPODS] --max=MAXPODS [--cpu-percent=CPU]', '', 'Examples:', '  kubectl autoscale deployment foo --min=2 --max=10'],
-  top: ['Display resource (CPU/memory) usage.', '', 'Usage:', '  kubectl top pods'],
+  top: ['Display resource (CPU/memory) usage.', '', 'Usage:', '  kubectl top pods [--sort-by=cpu|memory]', '  kubectl top nodes'],
   cordon: ['Mark node as unschedulable.', '', 'Usage:', '  kubectl cordon NODE'],
   uncordon: ['Mark node as schedulable.', '', 'Usage:', '  kubectl uncordon NODE'],
   drain: ['Drain node in preparation for maintenance.', '', 'Usage:', '  kubectl drain NODE [--ignore-daemonsets]'],
   describe: ['Show details of a specific resource or group of resources.', '', 'Usage:', '  kubectl describe (TYPE NAME)', '', 'Examples:', '  kubectl describe pod web-abc12'],
-  logs: ['Print the logs for a container in a pod.', '', 'Usage:', '  kubectl logs POD', '  kubectl logs job/NAME'],
-  events: ['Display events.', '', 'Usage:', '  kubectl events'],
+  logs: ['Print the logs for a container in a pod.', '', 'Usage:', '  kubectl logs POD [--previous] [--tail=N]', '  kubectl logs deployment/NAME', '  kubectl logs -l app=web --tail=5', '  kubectl logs job/NAME'],
+  events: ['Display events.', '', 'Usage:', '  kubectl events [--types=Warning] [--for=pod/NAME]'],
   completion: ['Output shell completion code for the specified shell (bash, zsh, fish, or powershell).', '', 'Usage:', '  kubectl completion bash|zsh'],
   'cluster-info': ['Display addresses of the control plane and services with label kubernetes.io/cluster-service=true.', '', 'Usage:', '  kubectl cluster-info'],
   version: ['Print the client and server version information for the current context.', '', 'Usage:', '  kubectl version'],
@@ -233,6 +234,7 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
     case 'get': {
       const kind = pos[0] ? KIND[pos[0]] : undefined;
       if (!kind) { err('error: the server doesn\'t have a resource type "' + (pos[0] || '') + '"  (try pods, deployments, services, nodes)'); break; }
+      if (getStructured(c, kind)) break;
       if (kind === 'pod' || kind === 'all') {
         s.flags.usedGet = true;
         const rows = podRows(s, wide, selector, !!flags['show-labels']);
@@ -277,12 +279,7 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       break;
     }
 
-    case 'top': {
-      if (KIND[pos[0]] !== 'pod') { err('error: You must specify the type of resource to get. Valid resource types include pods, nodes'); break; }
-      const rows = topRows(s);
-      if (rows.length === 1) say('No resources found in default namespace.', 'dim'); else emit(rows);
-      break;
-    }
+    case 'top': topCmd(c); break;
 
     case 'run': {
       const name = pos[0];
@@ -343,6 +340,11 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       if (!r || r.kind !== 'deployment' || !r.name) { err('usage: kubectl scale deployment NAME --replicas=N'); break; }
       const d = getDep(r.name); if (!d) break;
       const n = needNum(flags.replicas, 0, 12, 'replicas'); if (n === null) break;
+      if (flags['current-replicas'] !== undefined && Number(flags['current-replicas']) !== d.replicas) {
+        err('error: Expected replicas to be ' + String(flags['current-replicas']) + ', was ' + d.replicas);
+        break;
+      }
+      if (flags['current-replicas'] !== undefined) s.flags.guardedScale = true;
       d.replicas = n; s.cpPulse = 1;
       ok('deployment.apps/' + d.name + ' scaled');
       if (s.hpas.some(h => h.dep === d.name)) say('tip: an autoscaler manages this Deployment and may change replicas again.', 'dim');
@@ -418,6 +420,7 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       if (!['status', 'undo', 'history', 'pause', 'resume', 'restart'].includes(sub) || !r || r.kind !== 'deployment' || !r.name) { err('usage: kubectl rollout status|history|undo|pause|resume|restart deployment/NAME'); break; }
       const d = getDep(r.name); if (!d) break;
       if (sub === 'pause' || sub === 'resume' || sub === 'restart') { rolloutExtra(c, sub, d); break; }
+      if (rolloutRevisions(c, sub, d)) break;
       if (sub === 'status') {
         if (d.frozen) { say('deployment "' + d.name + '" is paused. Resume it with: kubectl rollout resume deployment/' + d.name); break; }
         const own = ownedPods(s, d.name);
@@ -447,6 +450,7 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
     }
 
     case 'delete': {
+      if (deleteBulk(c)) break;
       const r = resRef(pos);
       if (!r || !r.kind || !r.name) { err('usage: kubectl delete pod|deployment|service|hpa NAME'); break; }
       const name = r.name;
@@ -563,33 +567,14 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
       break;
     }
 
-    case 'logs': {
-      const name = pos[0];
-      if (name?.startsWith('job/')) { logsOfJob(c, name.slice(4)); break; }
-      const p = name ? findPod(name) : undefined;
-      if (!p) { if (name) notFound('pod', name); else err('usage: kubectl logs POD'); break; }
-      if (crashed(p) || p.phase === 'Error') s.flags.inspectedCrash = true;
-      if (p.owner?.startsWith('job/')) s.flags.readJobLogs = true;
-      if (p.phase === 'Running' && p.runFor === undefined) {
-        for (let i = 3; i >= 1; i--) say('10.244.0.' + (p.id % 200 + 1) + ' - "GET / HTTP/1.1" 200 612   (' + i * 2 + 's ago)', 'dim');
-      } else if (p.phase === 'Completed') p.logs.forEach(l => say(l));
-      else if (p.reason === 'OOMKilled') say('(no output: the container was OOMKilled before it logged anything; see: kubectl describe pod ' + p.name + ')', 'warn');
-      else if (p.logs.length) p.logs.forEach(l => say(l, 'err'));
-      else say('container "' + p.image + '" is not running yet (status: ' + p.phase + ')', 'warn');
-      break;
-    }
+    case 'logs': logsCmd(c); break;
 
     case 'label': labelCmd(c); break;
     case 'patch': patchCmd(c); break;
     case 'exec': execCmd(c); break;
     case 'port-forward': portForwardCmd(c); break;
 
-    case 'events': {
-      const evs = s.pods.flatMap(p => p.events.map(e => ({ p, e }))).sort((x, y) => x.e.t - y.e.t);
-      if (!evs.length) { say('No events found in default namespace.', 'dim'); break; }
-      emit([['LAST SEEN', 'TYPE', 'REASON', 'OBJECT', 'MESSAGE'] as (string | number)[]].concat(evs.slice(-25).map(({ p, e }) => [ageStr(s, e.t), e.type, e.reason, 'Pod/' + p.name, e.msg])));
-      break;
-    }
+    case 'events': eventsCmd(c); break;
 
     case 'version': {
       say('Client Version: v1.30.2');

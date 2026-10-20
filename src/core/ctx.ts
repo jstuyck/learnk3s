@@ -24,7 +24,7 @@ export interface Parsed { pos: string[]; flags: Record<string, FlagValue>; all: 
 /** Flags that never take a value, so they must not swallow the next word. */
 const BOOLEAN_FLAGS = new Set([
   'spot', 'show-labels', 'ignore-daemonsets', 'delete-emptydir-data', 'force', 'help', 'all', 'all-namespaces',
-  'overwrite', 'stdin', 'tty',
+  'overwrite', 'stdin', 'tty', 'previous',
 ]);
 const SHORT: Record<string, string> = { o: 'output', l: 'selector', n: 'namespace', h: 'help', A: 'all-namespaces', p: 'patch', i: 'stdin', t: 'tty' };
 

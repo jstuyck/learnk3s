@@ -1,5 +1,5 @@
 // kubectl-style tables. Column sets mirror the real tool (extra columns only with -o wide).
-import { endpoints, ownedPods, readyCount, tplOf } from './sim';
+import { endpoints, NODE_CPU, ownedPods, readyCount, tplOf } from './sim';
 import type { Pod, State } from './types';
 
 type Row = (string | number)[];
@@ -41,10 +41,10 @@ export const labelText = (labels: Record<string, string>): string =>
 export const podStatus = (p: Pod): string =>
   p.phase === 'CrashLoopBackOff' && p.reason === 'OOMKilled' && p.restarts === 0 ? 'OOMKilled' : p.phase;
 
-export function podRows(s: State, wide = false, selector?: string, showLabels = false): Row[] {
+export function podRows(s: State, wide = false, selector?: string, showLabels = false, list: Pod[] = s.pods): Row[] {
   const head = ['NAME', 'READY', 'STATUS', 'RESTARTS', 'AGE'].concat(wide ? ['IP', 'NODE'] : [], showLabels ? ['LABELS'] : []);
   const rows: Row[] = [head];
-  for (const p of s.pods.filter(x => matchesSelector(x, selector))) {
+  for (const p of list.filter(x => matchesSelector(x, selector))) {
     rows.push(
       [p.name, p.phase === 'Running' ? '1/1' : '0/1', podStatus(p), p.restarts, fmtAge(p.age)]
         .concat(wide ? [podIp(s, p), p.node || p.ranOn || '<none>'] : [], showLabels ? [labelText(p.labels)] : []),
@@ -93,10 +93,24 @@ export function nodeRows(s: State, showLabels = false): Row[] {
 
 /** `kubectl top pods`: a pod is requested at 500m CPU, so a saturated pod sits near 500m. */
 export const POD_CPU_REQUEST_M = 500;
-export function topRows(s: State): Row[] {
+const podMem = (p: Pod): number => 40 + (p.id % 17);
+export function topRows(s: State, sortBy?: 'cpu' | 'memory'): Row[] {
   const rows: Row[] = [['NAME', 'CPU(cores)', 'MEMORY(bytes)']];
-  for (const p of s.pods.filter(x => x.phase === 'Running')) {
-    rows.push([p.name, Math.round(p.util * POD_CPU_REQUEST_M) + 'm', 40 + (p.id % 17) + 'Mi']);
+  const running = s.pods.filter(x => x.phase === 'Running');
+  if (sortBy) running.sort((a, b) => (sortBy === 'cpu' ? b.util - a.util : podMem(b) - podMem(a)));
+  for (const p of running) rows.push([p.name, Math.round(p.util * POD_CPU_REQUEST_M) + 'm', podMem(p) + 'Mi']);
+  return rows;
+}
+
+/** `kubectl top nodes`: CPU is what the node's running pods use; memory is a flat base plus a share per pod. */
+export function topNodeRows(s: State): Row[] {
+  const rows: Row[] = [['NAME', 'CPU(cores)', 'CPU%', 'MEMORY(bytes)', 'MEMORY%']];
+  for (const n of s.nodes) {
+    if (n.down || s.t < n.bootUntil) { rows.push([n.name, '<unknown>', '<unknown>', '<unknown>', '<unknown>']); continue; }
+    const ps = s.pods.filter(p => p.node === n.name && p.phase === 'Running');
+    const cpu = Math.round(ps.reduce((a, p) => a + p.util * POD_CPU_REQUEST_M, 0));
+    const mem = 300 + ps.reduce((a, p) => a + podMem(p), 0);
+    rows.push([n.name, cpu + 'm', Math.round((cpu / NODE_CPU) * 100) + '%', mem + 'Mi', Math.round((mem / 4096) * 100) + '%']);
   }
   return rows;
 }
