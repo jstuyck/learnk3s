@@ -215,6 +215,14 @@ export interface Codex {
   text: string;
 }
 
+/** One step of a guided tutorial: a command to run and an explanation of what it does and why. */
+export interface TutorialStep {
+  title: string;
+  cmd: string;
+  /** HTML */
+  why: string;
+}
+
 export interface Level {
   id: string;
   title: string;
@@ -227,6 +235,8 @@ export interface Level {
   setup?(s: State): void;
   /** Hard Way missions: the terminal is a Linux shell on the lab machines, and there are no system pods */
   hardway?: 'machines' | 'cluster';
+  /** guided steps shown instead of hints (the Hard Way is a tutorial, not a challenge) */
+  tutorial?: TutorialStep[];
   story: string;
   objectives: Objective[];
   /** "command | what it does" - deliberately without arguments */
@@ -339,6 +349,8 @@ export interface State {
   namespaces?: string[];
   /** Kubernetes the Hard Way: the machines, files and services of the hand-built cluster */
   hw?: import('./hardway').HardWay;
+  /** index of the tutorial step the player is on */
+  tutStep?: number;
   money: { rev: number; cost: number; pen: number };
   recent: number[];
   nodeSeq: number;

@@ -71,16 +71,28 @@
       </div>
     </div>
     <aside class="right">
+      <div class="card" id="tut-card" style="display:none">
+        <div class="card-h" id="tut-h">Tutorial</div>
+        <div class="tut-progress"><div id="tut-bar"></div></div>
+        <h3 id="tut-title" class="tut-title"></h3>
+        <pre id="tut-cmd" class="tut-cmd"></pre>
+        <div class="tut-actions">
+          <button class="btn small primary" id="tut-run" title="Types the command for you and runs it">Run it for me</button>
+          <button class="btn small" id="tut-type" title="Puts the command in the terminal so you can run or edit it">Put it in the terminal</button>
+          <button class="btn small" id="tut-skip" title="Marks the step as done without running it">I did it myself &rarr;</button>
+        </div>
+        <div id="tut-why" class="tut-why"></div>
+      </div>
       <div class="card">
         <div class="card-h">Objectives</div>
         <ul id="objectives" class="objs"></ul>
         <button class="btn small" id="btn-brief">Re-read briefing</button>
       </div>
-      <div class="card">
+      <div class="card" id="card-cheats">
         <div class="card-h">Commands you will need</div>
         <ul id="cheats" class="cheats"></ul>
       </div>
-      <div class="card">
+      <div class="card" id="card-hints">
         <div class="card-h">Stuck?</div>
         <ol id="hints" class="hints"></ol>
         <button class="btn small" id="btn-hint">Show a hint</button>

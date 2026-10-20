@@ -1,6 +1,7 @@
 // The Hard Way shell, and mistakes that must fail the way they would on real machines.
 import { describe, expect, it } from 'vitest';
 import { completeLine } from '../src/core/completion';
+import { nodePrep } from '../src/data/hardway-tutorial';
 import { HW_SOLUTIONS } from '../src/data/levels-hardway';
 import { cmd, sim, start } from './helpers';
 
@@ -113,11 +114,10 @@ describe('Hard Way mistakes', () => {
   it('wrong certificate, swap and a missing package each stop a worker service', () => {
     const s = start('h-workers');
     const n0 = s.hw!.machines['node-0'];
-    for (const line of HW_SOLUTIONS[8].slice(0, 3)) cmd(s, line);
+    for (const line of HW_SOLUTIONS[8].slice(1, 4)) cmd(s, line);
     // prepare node-0 as the last solution step does, but without swapoff and the packages
-    const prep = HW_SOLUTIONS[8][3]
+    const prep = nodePrep('node-0')
       .replace('apt-get -y install socat conntrack ipset kmod; swapoff -a; ', '')
-      .replace('for HOST in node-0 node-1;', 'for HOST in node-0;')
       .replace('systemctl start containerd kubelet kube-proxy', 'systemctl start containerd');
     cmd(s, prep);
     expect(n0.units.containerd.active).toBe(true);

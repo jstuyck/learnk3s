@@ -149,3 +149,13 @@ h1 { font-size: clamp(2.4rem, 7vw, 3.6rem); margin: 10px 0 4px; letter-spacing: 
 .money .bad { color: var(--bad); }
 .best { font-size: .78rem; text-align: right; }
 .codex-h { margin: 16px 0 0; color: var(--dim); text-transform: uppercase; letter-spacing: .1em; font-size: .78rem; }
+
+/* guided tutorial (The Hard Way) */
+.tut-progress { height: 5px; background: #1b2a52; border-radius: 3px; margin-bottom: 10px; overflow: hidden; }
+.tut-progress > div { height: 100%; background: var(--accent2); width: 0; transition: width .3s; }
+.tut-title { margin: 0 0 8px; font-size: 1.05rem; }
+.tut-cmd { margin: 0 0 8px; padding: 9px 11px; background: #0b1430; border: 1px solid var(--line); border-radius: 8px; color: #b9ccff; font: .85rem/1.4 var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 150px; overflow: auto; }
+.tut-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.tut-actions .btn.small { margin-top: 0; }
+.tut-why { font-size: .9rem; color: #cfdaf7; }
+.tut-why code { font-size: .85em; }

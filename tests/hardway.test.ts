@@ -24,6 +24,7 @@ describe('Hard Way reference solutions', () => {
       expect(errs).toEqual([]);
       expect(missing).toEqual([]);
       expect(s.outcome).toBe('win');
+      expect(s.tutStep).toBe(L.tutorial!.length);   // typing the steps as written walks the whole tutorial
     });
   });
 });

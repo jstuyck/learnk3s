@@ -121,6 +121,7 @@ function openMission(): void {
       '<br>Goal: profit <b>$' + L.econ.target.toFixed(2) + '</b> by <b>' + L.econ.duration + 's</b>. Traffic starts immediately.</div>'
     : '';
   openModal('<div class="sub">' + campaign.name + ' &middot; Mission ' + (curLevel + 1) + ' &middot; ' + L.tag + '</div><h2>' + L.title + '</h2>' + L.story + econ +
+    (L.tutorial ? '<div class="learned"><b>How this tutorial works</b><br>The panel on the right walks you through <b>' + L.tutorial.length + ' steps</b>. Each one shows the command and explains what it does and why. Type it (Tab completes file names), or press <i>Run it for me</i>. Read the output, then move on. Take your time: understanding matters more than speed.</div>' : '') +
     '<p><b>Objectives</b></p><ul>' + L.objectives.map(o => '<li>' + o.text + '</li>').join('') + '</ul>' +
     '<div class="modal-actions"><button class="btn primary big" id="m-go">Begin mission</button></div>');
   $('m-go').onclick = () => { closeModal(); paused = false; $('term-input').focus(); };
@@ -151,9 +152,29 @@ function startLevel(i: number): void {
   $<HTMLButtonElement>('btn-hint').disabled = false;
   setSpeedButtons();
   renderObjectives();
+  renderTutorial();
   show('screen-game');
   sizeCanvas();
   openMission();
+}
+
+/** The Hard Way is a tutorial: show the current step (what to run, and why) instead of hints. */
+function renderTutorial(): void {
+  const L = S?.level;
+  const steps = L?.tutorial;
+  $('tut-card').style.display = steps ? '' : 'none';
+  $('card-cheats').style.display = steps ? 'none' : '';
+  $('card-hints').style.display = steps ? 'none' : '';
+  if (!S || !steps) return;
+  const i = Math.min(S.tutStep ?? 0, steps.length);
+  const done = i >= steps.length;
+  $('tut-bar').style.width = Math.round((i / steps.length) * 100) + '%';
+  $('tut-h').textContent = done ? 'Tutorial complete' : 'Step ' + (i + 1) + ' of ' + steps.length;
+  $('tut-title').textContent = done ? 'You have done every step of this lab' : steps[i].title;
+  $('tut-cmd').style.display = done ? 'none' : '';
+  $('tut-cmd').textContent = done ? '' : steps[i].cmd;
+  document.querySelectorAll<HTMLElement>('.tut-actions .btn').forEach(b => { b.style.display = done ? 'none' : ''; });
+  $('tut-why').innerHTML = done ? 'Check the objectives below. Anything still open means a step did not have the effect it should: read the output above, and use <code>ls</code>, <code>cat</code> and <code>systemctl status</code> to look.' : steps[i].why;
 }
 
 function renderObjectives(): void {
@@ -235,6 +256,7 @@ function submitCommand(raw: string): void {
   if (!S || S.outcome) return;
   termPrint(runCommand(S, line));
   refreshPrompt();
+  renderTutorial();
 }
 function refreshPrompt(): void {
   (document.querySelector('.prompt') as HTMLElement).textContent = S?.hw ? hwPrompt(S) : '$';
@@ -282,6 +304,22 @@ $('btn-hint').addEventListener('click', () => {
   if (n + 1 >= hs.length) $<HTMLButtonElement>('btn-hint').disabled = true;
 });
 $('btn-brief').addEventListener('click', openMission);
+$('tut-run').addEventListener('click', () => {
+  const step = S?.level.tutorial?.[S.tutStep ?? 0];
+  if (step && S && !S.outcome) { paused = false; submitCommand(step.cmd); }
+});
+$('tut-type').addEventListener('click', () => {
+  const step = S?.level.tutorial?.[S.tutStep ?? 0];
+  if (!step) return;
+  const input = $<HTMLInputElement>('term-input');
+  input.value = step.cmd;
+  input.focus();
+});
+$('tut-skip').addEventListener('click', () => {
+  if (!S?.level.tutorial) return;
+  S.tutStep = (S.tutStep ?? 0) + 1;
+  renderTutorial();
+});
 $('btn-restart').addEventListener('click', () => startLevel(curLevel));
 $('btn-game-map').addEventListener('click', showMap);
 $('btn-start').addEventListener('click', () => openMode('campaign'));

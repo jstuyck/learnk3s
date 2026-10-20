@@ -3,6 +3,7 @@ import { REPO_DIR, apiserverUp, kubeconfigProblem, unitActive } from '../core/ha
 import type { Machine } from '../core/hardway';
 import { runHwSilently } from '../core/hwshell';
 import { readyCount } from '../core/sim';
+import { LABS } from './hardway-tutorial';
 import type { Level, Objective, State } from '../core/types';
 
 // Campaign 4: "The Hard Way". Bootstrap a Kubernetes cluster from nothing, following Kelsey Hightower's
@@ -10,135 +11,18 @@ import type { Level, Objective, State } from '../core/types';
 // Every mission starts from the state the previous labs leave behind (the reference solutions below are replayed).
 
 const D = REPO_DIR;
-const KC = (comp: string, server: string, user: string, crt: string) =>
-  `kubectl config set-cluster kubernetes-the-hard-way --certificate-authority=ca.crt --embed-certs=true --server=${server} --kubeconfig=${comp}.kubeconfig; ` +
-  `kubectl config set-credentials ${user} --client-certificate=${crt}.crt --client-key=${crt}.key --embed-certs=true --kubeconfig=${comp}.kubeconfig; ` +
-  `kubectl config set-context default --cluster=kubernetes-the-hard-way --user=${user} --kubeconfig=${comp}.kubeconfig; ` +
-  `kubectl config use-context default --kubeconfig=${comp}.kubeconfig`;
 
-/** The reference solution of each lab, exactly as a player would type it. */
-export const HW_SOLUTIONS: string[][] = [
-  // 1. jumpbox
-  [
-    'git clone --depth 1 https://github.com/kelseyhightower/kubernetes-the-hard-way.git',
-    'cd kubernetes-the-hard-way',
-    'ARCH=$(dpkg --print-architecture)',
-    'wget -q --show-progress --https-only --timestamping -P downloads -i downloads-${ARCH}.txt',
-    'mkdir -p downloads/{client,cni-plugins,controller,worker}',
-    'tar -xvf downloads/crictl-v1.32.0-linux-${ARCH}.tar.gz -C downloads/worker/ crictl',
-    'tar -xvf downloads/containerd-2.1.0-beta.0-linux-${ARCH}.tar.gz --strip-components 1 -C downloads/worker/',
-    'tar -xvf downloads/cni-plugins-linux-${ARCH}-v1.6.2.tgz -C downloads/cni-plugins/',
-    'tar -xvf downloads/etcd-v3.6.0-rc.3-linux-${ARCH}.tar.gz -C downloads/ --strip-components 1 etcd-v3.6.0-rc.3-linux-${ARCH}/etcdctl etcd-v3.6.0-rc.3-linux-${ARCH}/etcd',
-    'mv downloads/{etcdctl,kubectl} downloads/client/',
-    'mv downloads/{etcd,kube-apiserver,kube-controller-manager,kube-scheduler} downloads/controller/',
-    'mv downloads/{kubelet,kube-proxy} downloads/worker/',
-    'mv downloads/runc.${ARCH} downloads/worker/runc',
-    'chmod +x downloads/{client,cni-plugins,controller,worker}/*',
-    'cp downloads/client/kubectl /usr/local/bin/',
-    'kubectl version --client',
-  ],
-  // 2. compute resources
-  [
-    'ssh-keygen',
-    'while read IP FQDN HOST SUBNET; do ssh-copy-id root@${IP}; done < machines.txt',
-    `while read IP FQDN HOST SUBNET; do CMD="sed -i 's/^127.0.1.1.*/127.0.1.1\\t\${FQDN} \${HOST}/' /etc/hosts"; ssh -n root@\${IP} "$CMD"; ssh -n root@\${IP} hostnamectl set-hostname \${HOST}; ssh -n root@\${IP} systemctl restart systemd-hostnamed; done < machines.txt`,
-    'echo "" > hosts',
-    'echo "# Kubernetes The Hard Way" >> hosts',
-    'while read IP FQDN HOST SUBNET; do ENTRY="${IP} ${FQDN} ${HOST}"; echo $ENTRY >> hosts; done < machines.txt',
-    'cat hosts >> /etc/hosts',
-    'while read IP FQDN HOST SUBNET; do scp hosts root@${HOST}:~/; ssh -n root@${HOST} "cat hosts >> /etc/hosts"; done < machines.txt',
-  ],
-  // 3. certificate authority and TLS certificates
-  [
-    'openssl genrsa -out ca.key 4096',
-    'openssl req -x509 -new -sha512 -noenc -key ca.key -days 3653 -config ca.conf -out ca.crt',
-    'for i in admin node-0 node-1 kube-proxy kube-scheduler kube-controller-manager kube-api-server service-accounts; do openssl genrsa -out "${i}.key" 4096; openssl req -new -key "${i}.key" -sha256 -config "ca.conf" -section ${i} -out "${i}.csr"; openssl x509 -req -days 3653 -in "${i}.csr" -copy_extensions copyall -sha256 -CA "ca.crt" -CAkey "ca.key" -CAcreateserial -out "${i}.crt"; done',
-    'openssl x509 -in kube-api-server.crt -noout -text',
-  ],
-  // 4. distribute the certificates
-  [
-    'for host in node-0 node-1; do ssh root@${host} mkdir /var/lib/kubelet/; scp ca.crt root@${host}:/var/lib/kubelet/; scp ${host}.crt root@${host}:/var/lib/kubelet/kubelet.crt; scp ${host}.key root@${host}:/var/lib/kubelet/kubelet.key; done',
-    'scp ca.key ca.crt kube-api-server.key kube-api-server.crt service-accounts.key service-accounts.crt root@server:~/',
-  ],
-  // 5. kubeconfigs
-  [
-    `for host in node-0 node-1; do ${KC('${host}', 'https://server.kubernetes.local:6443', 'system:node:${host}', '${host}')}; done`,
-    `for comp in kube-proxy kube-controller-manager kube-scheduler; do ${KC('${comp}', 'https://server.kubernetes.local:6443', 'system:${comp}', '${comp}')}; done`,
-    KC('admin', 'https://127.0.0.1:6443', 'admin', 'admin'),
-    'for host in node-0 node-1; do ssh root@${host} "mkdir -p /var/lib/{kube-proxy,kubelet}"; scp kube-proxy.kubeconfig root@${host}:/var/lib/kube-proxy/kubeconfig; scp ${host}.kubeconfig root@${host}:/var/lib/kubelet/kubeconfig; done',
-    'scp admin.kubeconfig kube-controller-manager.kubeconfig kube-scheduler.kubeconfig root@server:~/',
-  ],
-  // 6. data encryption
-  [
-    'export ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)',
-    'envsubst < configs/encryption-config.yaml > encryption-config.yaml',
-    'scp encryption-config.yaml root@server:~/',
-  ],
-  // 7. etcd
-  [
-    'scp downloads/controller/etcd downloads/client/etcdctl units/etcd.service root@server:~/',
-    'ssh root@server "mv etcd etcdctl /usr/local/bin/; mkdir -p /etc/etcd /var/lib/etcd; chmod 700 /var/lib/etcd; cp ca.crt kube-api-server.key kube-api-server.crt /etc/etcd/; mv etcd.service /etc/systemd/system/; systemctl daemon-reload; systemctl enable etcd; systemctl start etcd"',
-    'ssh root@server etcdctl member list',
-  ],
-  // 8. control plane
-  [
-    'scp downloads/controller/kube-apiserver downloads/controller/kube-controller-manager downloads/controller/kube-scheduler downloads/client/kubectl units/kube-apiserver.service units/kube-controller-manager.service units/kube-scheduler.service configs/kube-scheduler.yaml configs/kube-apiserver-to-kubelet.yaml root@server:~/',
-    'ssh root@server "mv kube-apiserver kube-controller-manager kube-scheduler kubectl /usr/local/bin/; mkdir -p /etc/kubernetes/config; mkdir -p /var/lib/kubernetes/; mv ca.crt ca.key kube-api-server.key kube-api-server.crt service-accounts.key service-accounts.crt encryption-config.yaml /var/lib/kubernetes/; mv kube-apiserver.service /etc/systemd/system/kube-apiserver.service; mv kube-controller-manager.kubeconfig /var/lib/kubernetes/; mv kube-controller-manager.service /etc/systemd/system/; mv kube-scheduler.kubeconfig /var/lib/kubernetes/; mv kube-scheduler.yaml /etc/kubernetes/config/; mv kube-scheduler.service /etc/systemd/system/; systemctl daemon-reload; systemctl enable kube-apiserver kube-controller-manager kube-scheduler; systemctl start kube-apiserver kube-controller-manager kube-scheduler"',
-    'ssh root@server "kubectl cluster-info --kubeconfig admin.kubeconfig"',
-    'ssh root@server "kubectl apply -f kube-apiserver-to-kubelet.yaml --kubeconfig admin.kubeconfig"',
-    'curl --cacert ca.crt https://server.kubernetes.local:6443/version',
-  ],
-  // 9. worker nodes
-  [
-    'for HOST in node-0 node-1; do SUBNET=$(grep ${HOST} machines.txt | cut -d " " -f 4); sed "s|SUBNET|$SUBNET|g" configs/10-bridge.conf > 10-bridge.conf; sed "s|SUBNET|$SUBNET|g" configs/kubelet-config.yaml > kubelet-config.yaml; scp 10-bridge.conf kubelet-config.yaml root@${HOST}:~/; done',
-    'for HOST in node-0 node-1; do scp downloads/worker/* downloads/client/kubectl configs/99-loopback.conf configs/containerd-config.toml configs/kube-proxy-config.yaml units/containerd.service units/kubelet.service units/kube-proxy.service root@${HOST}:~/; done',
-    'for HOST in node-0 node-1; do scp downloads/cni-plugins/* root@${HOST}:~/cni-plugins/; done',
-    'for HOST in node-0 node-1; do ssh root@${HOST} "apt-get -y install socat conntrack ipset kmod; swapoff -a; mkdir -p /etc/cni/net.d /opt/cni/bin /var/lib/kubelet /var/lib/kube-proxy /var/lib/kubernetes /var/run/kubernetes; mv crictl kube-proxy kubelet runc /usr/local/bin/; mv containerd containerd-shim-runc-v2 containerd-stress /bin/; mv cni-plugins/* /opt/cni/bin/; mv 10-bridge.conf 99-loopback.conf /etc/cni/net.d/; modprobe br-netfilter; echo br-netfilter >> /etc/modules-load.d/modules.conf; echo \'net.bridge.bridge-nf-call-iptables = 1\' >> /etc/sysctl.d/kubernetes.conf; echo \'net.bridge.bridge-nf-call-ip6tables = 1\' >> /etc/sysctl.d/kubernetes.conf; sysctl -p /etc/sysctl.d/kubernetes.conf; mkdir -p /etc/containerd/; mv containerd-config.toml /etc/containerd/config.toml; mv containerd.service /etc/systemd/system/; mv kubelet-config.yaml /var/lib/kubelet/; mv kubelet.service /etc/systemd/system/; mv kube-proxy-config.yaml /var/lib/kube-proxy/; mv kube-proxy.service /etc/systemd/system/; systemctl daemon-reload; systemctl enable containerd kubelet kube-proxy; systemctl start containerd kubelet kube-proxy"; done',
-    'ssh root@server "kubectl get nodes --kubeconfig admin.kubeconfig"',
-  ],
-  // 10. kubectl for remote access
-  [
-    'curl --cacert ca.crt https://server.kubernetes.local:6443/version',
-    'kubectl config set-cluster kubernetes-the-hard-way --certificate-authority=ca.crt --embed-certs=true --server=https://server.kubernetes.local:6443',
-    'kubectl config set-credentials admin --client-certificate=admin.crt --client-key=admin.key',
-    'kubectl config set-context kubernetes-the-hard-way --cluster=kubernetes-the-hard-way --user=admin',
-    'kubectl config use-context kubernetes-the-hard-way',
-    'kubectl version',
-    'kubectl get nodes',
-  ],
-  // 11. pod network routes
-  [
-    'SERVER_IP=$(grep server machines.txt | cut -d " " -f 1)',
-    'NODE_0_IP=$(grep node-0 machines.txt | cut -d " " -f 1)',
-    'NODE_0_SUBNET=$(grep node-0 machines.txt | cut -d " " -f 4)',
-    'NODE_1_IP=$(grep node-1 machines.txt | cut -d " " -f 1)',
-    'NODE_1_SUBNET=$(grep node-1 machines.txt | cut -d " " -f 4)',
-    'ssh root@server "ip route add ${NODE_0_SUBNET} via ${NODE_0_IP}; ip route add ${NODE_1_SUBNET} via ${NODE_1_IP}"',
-    'ssh root@node-0 "ip route add ${NODE_1_SUBNET} via ${NODE_1_IP}"',
-    'ssh root@node-1 "ip route add ${NODE_0_SUBNET} via ${NODE_0_IP}"',
-  ],
-  // 12. smoke test
-  [
-    'kubectl create secret generic kubernetes-the-hard-way --from-literal="mykey=mydata"',
-    "ssh root@server 'etcdctl get /registry/secrets/default/kubernetes-the-hard-way | hexdump -C'",
-    'kubectl create deployment nginx --image=nginx:latest',
-    'kubectl get pods -l app=nginx',
-    'POD_NAME=$(kubectl get pods -l app=nginx -o jsonpath="{.items[0].metadata.name}")',
-    'kubectl port-forward $POD_NAME 8080:80',
-    'kubectl logs $POD_NAME',
-    'kubectl exec -ti $POD_NAME -- nginx -v',
-    'kubectl expose deployment nginx --port 80 --type NodePort',
-    'NODE_PORT=$(kubectl get svc nginx --output=jsonpath="{.spec.ports[0].nodePort}")',
-    'NODE_NAME=$(kubectl get pods -l app=nginx -o jsonpath="{.items[0].spec.nodeName}")',
-    'curl -I http://${NODE_NAME}:${NODE_PORT}',
-  ],
-];
+/** The commands of each lab, in order: the reference solution (and the tutorial steps). */
+export const HW_SOLUTIONS: string[][] = LABS.map(steps => steps.map(s => s.cmd));
 
 /** Replay the labs before `n` so a mission starts where the previous ones end. */
 function replay(s: State, n: number): void {
   for (let i = 0; i < n; i++) for (const line of HW_SOLUTIONS[i]) runHwSilently(s, line, runPlain);
   s.flags = {};
   s.hw!.vars = {};
+  s.hw!.active = 'jumpbox';
+  s.hw!.stack = [];
+  s.tutStep = 0;
   s.cmdErrors = 0;
 }
 
@@ -169,6 +53,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <p>This terminal is a shell on the jumpbox. First get the guide's files: <code>git clone --depth 1 https://github.com/kelseyhightower/kubernetes-the-hard-way.git</code> and <code>cd</code> into it. The file <code>downloads-amd64.txt</code> lists every binary a cluster needs (<code>cat</code> it!). Download them all with <code>wget -i</code>, then sort them by where they will run: <code>client</code>, <code>controller</code>, <code>worker</code> and <code>cni-plugins</code>. Tarballs need <code>tar -xvf</code>. Finally make them executable and install <code>kubectl</code> into <code>/usr/local/bin</code>.</p>
       <p>Tip: the shell understands variables, <code>$(...)</code>, pipes, redirects, globs and <code>{a,b}</code> expansion, so you can type the guide's commands as they are. Type <code>help</code> for the list.</p>`,
     setup: lab(0),
+    tutorial: LABS[0],
     objectives: [
       make('clone', s => has(s, 'jumpbox', D + '/ca.conf', D + '/units/etcd.service'), 'Clone the guide repository'),
       make('download', s => Object.keys(M(s, 'jumpbox').files).filter(f => f.startsWith(D + '/downloads/')).length >= 11, 'Download all 11 binaries and archives'),
@@ -198,6 +83,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <li>Build a <code>hosts</code> file (<code>IP FQDN HOST</code> per line) and append it to <code>/etc/hosts</code> on the jumpbox <i>and</i> on the three machines (<code>scp</code> it over, then <code>cat hosts &gt;&gt; /etc/hosts</code> there).</li></ol>
       <p>You work from the repository directory (<code>cd kubernetes-the-hard-way</code>); the jumpbox state from lab 02 is already in place.</p>`,
     setup: lab(1),
+    tutorial: LABS[1],
     objectives: [
       make('keys', s => s.hw!.keyGenerated && ['server', 'node-0', 'node-1'].every(m => M(s, m).hasKey), 'Create an SSH key and copy it to server, node-0 and node-1'),
       make('hostnames', s => M(s, 'server').hostname === 'server' && M(s, 'node-0').hostname === 'node-0' && M(s, 'node-1').hostname === 'node-1', 'Set the hostnames: server, node-0, node-1'),
@@ -222,6 +108,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <p>Read <code>ca.conf</code>: it has one <code>[section]</code> per identity. The <b>CN</b> is the user name Kubernetes sees (<code>system:node:node-0</code>, <code>admin</code>), the <b>O</b> is the group (<code>system:masters</code> = cluster admin). The API server certificate also needs <b>Subject Alternative Names</b> (every name and IP clients may use to reach it).</p>
       <p>1. Create the CA key and a self-signed CA certificate (<code>openssl genrsa</code>, <code>openssl req -x509</code>).<br>2. For each of the eight sections: generate a key, create a <b>CSR</b> (<code>openssl req -new ... -section NAME</code>), and sign it with the CA (<code>openssl x509 -req ... -CA ca.crt -CAkey ca.key -CAcreateserial</code>). A <code>for</code> loop saves typing.<br>3. Inspect the API server certificate with <code>openssl x509 -in kube-api-server.crt -noout -text</code>. If its SAN list is empty you forgot <code>-copy_extensions copyall</code>.</p>`,
     setup: lab(2),
+    tutorial: LABS[2],
     objectives: [
       make('ca', s => M(s, 'jumpbox').files[D + '/ca.crt']?.meta?.kind === 'cert' && has(s, 'jumpbox', D + '/ca.key'), 'Create the certificate authority (ca.key and ca.crt)'),
       make('certs', s => ['admin', 'node-0', 'node-1', 'kube-proxy', 'kube-scheduler', 'kube-controller-manager', 'kube-api-server', 'service-accounts'].every(n => certOf(s, 'jumpbox', D + '/' + n + '.crt') === n && has(s, 'jumpbox', D + '/' + n + '.key')),
@@ -249,6 +136,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <li>The control plane (<code>server</code>) needs the CA key and certificate, the API server's pair and the service-account pair.</li></ul>
       <p>Use <code>ssh root@HOST mkdir ...</code> to create the directory and <code>scp FILE root@HOST:DEST</code> to copy. A <code>for host in node-0 node-1; do ... done</code> loop does both workers at once.</p>`,
     setup: lab(3),
+    tutorial: LABS[3],
     objectives: [
       make('kubelet', s => workers.every(w => has(s, w, '/var/lib/kubelet/ca.crt', '/var/lib/kubelet/kubelet.key') && certOf(s, w, '/var/lib/kubelet/kubelet.crt') === w), 'Install ca.crt, kubelet.crt and kubelet.key on each worker (its own!)'),
       make('server', s => has(s, 'server', '/root/ca.crt', '/root/ca.key', '/root/kube-api-server.crt', '/root/kube-api-server.key', '/root/service-accounts.crt', '/root/service-accounts.key'), 'Copy the CA and API server certificates to the server'),
@@ -271,6 +159,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <p>Make one for each worker's kubelet (<code>system:node:node-0</code>...), plus <code>kube-proxy</code>, <code>kube-controller-manager</code> and <code>kube-scheduler</code> (the API at <code>https://server.kubernetes.local:6443</code>), and <code>admin</code> (the API at <code>https://127.0.0.1:6443</code>, because you will use it on the server itself).</p>
       <p><b>Use --embed-certs=true.</b> Without it the file only <i>points</i> at your certificate files, and breaks the moment it is copied to another machine. Then distribute: workers get <code>kubelet</code> and <code>kube-proxy</code> kubeconfigs, the server gets admin, controller-manager and scheduler.</p>`,
     setup: lab(4),
+    tutorial: LABS[4],
     objectives: [
       make('nodes', s => workers.every(w => kubeconfigUser(s, 'jumpbox', D + '/' + w + '.kubeconfig') === w), 'Create node-0.kubeconfig and node-1.kubeconfig (embedded certs)'),
       make('components', s => [['kube-proxy', 'kube-proxy'], ['kube-controller-manager', 'kube-controller-manager'], ['kube-scheduler', 'kube-scheduler'], ['admin', 'admin']].every(([f, u]) => kubeconfigUser(s, 'jumpbox', D + '/' + f + '.kubeconfig') === u),
@@ -298,6 +187,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <p>Generate a random key and keep it in an environment variable: <code>export ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)</code>. The template <code>configs/encryption-config.yaml</code> contains <code>\${ENCRYPTION_KEY}</code>; fill it with <code>envsubst &lt; configs/encryption-config.yaml &gt; encryption-config.yaml</code>, read the result with <code>cat</code>, and copy it to the server.</p>
       <p>Careful: if the variable is empty the template is filled with nothing, and the API server will refuse to start later.</p>`,
     setup: lab(5),
+    tutorial: LABS[5],
     objectives: [
       make('config', s => M(s, 'jumpbox').files[D + '/encryption-config.yaml']?.meta?.kind === 'encryption' && (M(s, 'jumpbox').files[D + '/encryption-config.yaml']!.meta as { keyOk: boolean }).keyOk, 'Create encryption-config.yaml with a valid 32-byte key'),
       make('server', s => { const m = M(s, 'server').files['/root/encryption-config.yaml']?.meta; return m?.kind === 'encryption' && m.keyOk; }, 'Copy it to the server'),
@@ -321,6 +211,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <li><code>systemctl daemon-reload</code> so systemd notices the new unit, then <code>systemctl enable etcd</code> and <code>systemctl start etcd</code>. If it fails, <code>systemctl status etcd</code> and <code>journalctl -u etcd</code> explain why.</li>
       <li>Check with <code>etcdctl member list</code>.</li></ol>`,
     setup: lab(6),
+    tutorial: LABS[6],
     objectives: [
       make('binaries', s => isExec(s, 'server', '/usr/local/bin/etcd', '/usr/local/bin/etcdctl'), 'Install etcd and etcdctl in /usr/local/bin on the server'),
       make('unit', s => has(s, 'server', '/etc/systemd/system/etcd.service') && !!M(s, 'server').units.etcd?.enabled, 'Install and enable the etcd systemd unit'),
@@ -346,6 +237,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <ul><li>binaries &rarr; <code>/usr/local/bin/</code></li><li>certificates, keys, <code>encryption-config.yaml</code> &rarr; <code>/var/lib/kubernetes/</code></li><li>the controller-manager and scheduler kubeconfigs &rarr; <code>/var/lib/kubernetes/</code></li><li><code>kube-scheduler.yaml</code> &rarr; <code>/etc/kubernetes/config/</code></li><li>unit files &rarr; <code>/etc/systemd/system/</code></li></ul>
       <p>Reload, enable and start the three services (order matters: the API server needs etcd, the other two need the API server). Then apply the RBAC rule that lets the API server call the kubelets (<code>kubectl apply -f kube-apiserver-to-kubelet.yaml --kubeconfig admin.kubeconfig</code>) and check from the jumpbox with <code>curl --cacert ca.crt https://server.kubernetes.local:6443/version</code>.</p>`,
     setup: lab(7),
+    tutorial: LABS[7],
     objectives: [
       make('files', s => has(s, 'server', '/var/lib/kubernetes/ca.crt', '/var/lib/kubernetes/kube-api-server.crt', '/var/lib/kubernetes/service-accounts.key', '/var/lib/kubernetes/encryption-config.yaml', '/var/lib/kubernetes/kube-controller-manager.kubeconfig', '/var/lib/kubernetes/kube-scheduler.kubeconfig', '/etc/kubernetes/config/kube-scheduler.yaml'), 'Put certificates, kubeconfigs and configs in /var/lib/kubernetes and /etc/kubernetes/config'),
       make('api', s => apiserverUp(s.hw!), 'kube-apiserver is running'),
@@ -375,6 +267,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <li>Verify from the server: <code>kubectl get nodes --kubeconfig admin.kubeconfig</code>.</li></ol>
       <p>Mistakes teach here: a missing package, a still-active swap or the wrong node's certificate each stop a service with a clear message in <code>systemctl status</code> and <code>journalctl -u</code>.</p>`,
     setup: lab(8),
+    tutorial: LABS[8],
     objectives: [
       make('prep', s => workers.every(w => !M(s, w).swap && ['socat', 'conntrack', 'ipset', 'kmod'].every(p => M(s, w).packages.includes(p))), 'Install the packages and turn swap off on both workers'),
       make('runtime', s => workers.every(w => active(s, w, 'containerd')), 'containerd is running on both workers'),
@@ -402,6 +295,7 @@ export const HARDWAY_LEVELS: Level[] = [
     story: `<p>So far you ran <code>kubectl</code> on the server with <code>admin.kubeconfig</code>. A real admin uses their own machine. First check that the API answers over TLS: <code>curl --cacert ca.crt https://server.kubernetes.local:6443/version</code> (without <code>--cacert</code> curl rightly complains it does not trust the server).</p>
       <p>Then build the default kubeconfig (<code>~/.kube/config</code>) on the jumpbox: <code>set-cluster</code> with the CA and server URL, <code>set-credentials admin</code> with <code>admin.crt</code>/<code>admin.key</code>, a <code>set-context</code>, and <code>use-context</code>. Finish with <code>kubectl version</code> and <code>kubectl get nodes</code>.</p>`,
     setup: lab(9),
+    tutorial: LABS[9],
     objectives: [
       make('curl', s => !!s.flags.curledApi, 'Call the API with curl and the CA certificate'),
       make('config', s => { const e = M(s, 'jumpbox').files['/root/.kube/config']; return e?.meta?.kind === 'kubeconfig' && !kubeconfigProblem(M(s, 'jumpbox'), '/root/.kube/config') && e.meta.current === 'kubernetes-the-hard-way'; }, 'Create the default kubeconfig with context kubernetes-the-hard-way'),
@@ -427,6 +321,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <ul><li>on <code>server</code>: a route to <i>both</i> pod subnets,</li><li>on <code>node-0</code>: a route to node-1's subnet,</li><li>on <code>node-1</code>: a route to node-0's subnet.</li></ul>
       <p>Check with <code>ssh root@HOST ip route</code>.</p>`,
     setup: lab(10),
+    tutorial: LABS[10],
     objectives: [
       make('server', s => ['10.200.0.0/24 via 10.240.0.20', '10.200.1.0/24 via 10.240.0.21'].every(r => M(s, 'server').routes.includes(r)), 'server routes to both pod subnets'),
       make('node-0', s => M(s, 'node-0').routes.includes('10.200.1.0/24 via 10.240.0.21'), 'node-0 routes to node-1\'s pods'),
@@ -453,6 +348,7 @@ export const HARDWAY_LEVELS: Level[] = [
       <li><b>Services:</b> expose it as a <code>NodePort</code> and <code>curl -I</code> a node on that port. The pod may run on the <i>other</i> node: that only works because of the routes from lab 11.</li></ol>
       <p>Tip: put values into variables with <code>$(kubectl get ... -o jsonpath="...")</code>.</p>`,
     setup: lab(11),
+    tutorial: LABS[11],
     objectives: [
       make('encrypted', s => s.secrets.some(x => x.name === 'kubernetes-the-hard-way') && !!s.flags.checkedEncryption, 'Create a Secret and look at it in etcd (encrypted at rest)'),
       make('deployment', s => readyCount(s, 'nginx') >= 1, 'Run an nginx Deployment'),

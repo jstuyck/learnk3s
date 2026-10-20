@@ -1040,6 +1040,9 @@ export function runHw(s: State, line: string, plain: (s: State, line: string) =>
   const res = runLine(sh, line);
   syncCluster(s);
   if (res.code !== 0 && s.cmdErrors === before) s.cmdErrors++;
+  const steps = s.level.tutorial;
+  const norm = (x: string) => x.trim().replace(/\s+/g, ' ');
+  if (steps && res.code === 0 && steps[s.tutStep ?? 0] && norm(steps[s.tutStep ?? 0].cmd) === norm(line)) s.tutStep = (s.tutStep ?? 0) + 1;
   return res.lines;
 }
 
