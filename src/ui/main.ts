@@ -176,8 +176,14 @@ function renderTutorial(): void {
   $('tut-title').textContent = done ? 'You have done every step of this lab' : steps[i].title;
   $('tut-cmd').style.display = done ? 'none' : '';
   $('tut-cmd').textContent = done ? '' : steps[i].cmd;
-  document.querySelectorAll<HTMLElement>('.tut-actions .btn').forEach(b => { b.style.display = done ? 'none' : ''; });
-  $('tut-why').innerHTML = done ? 'Check the objectives below. Anything still open means a step did not have the effect it should: read the output above, and use <code>ls</code>, <code>cat</code> and <code>systemctl status</code> to look.' : steps[i].why;
+  document.querySelectorAll<HTMLElement>('.tut-actions .btn').forEach(b => { b.style.display = done && b.id !== 'tut-back' ? 'none' : ''; });
+  $<HTMLButtonElement>('tut-back').disabled = i === 0;
+  const open = L!.objectives.filter(o => !S!.done[o.id]);
+  $('tut-why').innerHTML = done
+    ? (open.length
+      ? '<b>Still open:</b><ul>' + open.map(o => '<li>' + o.text + '</li>').join('') + '</ul>A step did not have the effect it should (a skipped step, or a typo that still ran). Press <b>Back</b> to redo the relevant steps, and inspect with <code>ls</code>, <code>cat</code> and <code>systemctl status</code>.'
+      : 'Every objective is met.')
+    : steps[i].why;
 }
 
 function renderObjectives(): void {
@@ -329,6 +335,11 @@ $('tut-type').addEventListener('click', () => {
   const input = $<HTMLInputElement>('term-input');
   input.value = step.cmd;
   input.focus();
+});
+$('tut-back').addEventListener('click', () => {
+  if (!S?.level.tutorial) return;
+  S.tutStep = Math.max(0, (S.tutStep ?? 0) - 1);
+  renderTutorial();
 });
 $('tut-skip').addEventListener('click', () => {
   if (!S?.level.tutorial) return;
