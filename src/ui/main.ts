@@ -135,6 +135,7 @@ function startLevel(i: number): void {
   const L: Level = campaign.levels[i];
   S = newState(L);
   $('end-card').style.display = 'none';
+  $('end-card').className = 'card';
   outcomeShown = false; shownDone = -1; selectedId = null; speed = 1; paused = true;
   setView('cluster');
   document.documentElement.style.setProperty('--term-h', L.hardway ? 'clamp(340px, 50vh, 680px)' : 'clamp(300px, 42vh, 560px)');
@@ -211,6 +212,9 @@ function endLevel(): void {
   $('end-h').textContent = won ? 'Mission complete' : 'Mission failed';
   $('end-text').textContent = won ? 'Every objective is done. Read the output at your own pace.' : S.failReason;
   $('end-next').style.display = won && !last ? '' : 'none';
+  $('end-card').className = 'card ' + (won ? 'win' : 'fail');
+  const primary = won && !last ? 'end-next' : 'end-view';
+  for (const id of ['end-next', 'end-view']) $(id).classList.toggle('nudge', id === primary);
   termPrint([{ t: won ? '★ Mission complete! Open "View results" on the right when you are ready.' : '✖ Mission failed: ' + S.failReason, c: won ? 'ok' : 'err' }]);
 }
 

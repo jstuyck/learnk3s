@@ -170,3 +170,11 @@ h1 { font-size: clamp(2.4rem, 7vw, 3.6rem); margin: 10px 0 4px; letter-spacing: 
 .vtab:hover { color: var(--text); border-color: #36497c; }
 .vtab.active { color: #fff; background: var(--panel2); border-color: var(--accent2); box-shadow: 0 -2px 0 var(--accent2) inset; }
 .left.term-big .view-tabs { display: none; }
+
+/* mission finished: draw attention to what to click next */
+@keyframes nudge { 0%, 100% { box-shadow: 0 0 0 0 rgba(91,141,255,.7); transform: scale(1); } 50% { box-shadow: 0 0 0 9px rgba(91,141,255,0); transform: scale(1.06); } }
+@keyframes glow { 0%, 100% { border-color: var(--ok); box-shadow: 0 0 0 0 rgba(61,220,132,.35); } 50% { border-color: #8dffc0; box-shadow: 0 0 18px 2px rgba(61,220,132,.45); } }
+.btn.nudge { animation: nudge 1.1s ease-in-out infinite; }
+#end-card.win { animation: glow 1.6s ease-in-out infinite; }
+#end-card.fail { border-color: var(--bad); }
+@media (prefers-reduced-motion: reduce) { .btn.nudge, #end-card.win { animation: none; } }
