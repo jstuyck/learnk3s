@@ -534,7 +534,13 @@ function kubectl(s: State, verb: string, toks: string[], out: Out, cmdArgs: stri
 
     case 'describe': {
       const r = resRef(pos);
-      if (!r || !r.kind || !r.name) { err('usage: kubectl describe pod|node|deployment|service NAME'); break; }
+      if (r?.kind === 'quota' && !r.name) {
+        const qs = s.quotas.filter(q => q.ns === curNs);
+        if (!qs.length) say('No resources found in ' + curNs + ' namespace.', 'dim');
+        qs.forEach((q, i) => { if (i) say(''); describeQuota(c, q.name); });
+        break;
+      }
+      if (!r || !r.kind || !r.name) { err('usage: kubectl describe pod|node|deployment|service|quota|namespace NAME'); break; }
       const name = r.name;
       if (r.kind === 'quota') {
         describeQuota(c, name);

@@ -108,7 +108,7 @@ export const NAMESPACE_LEVELS: Level[] = [
     ],
     cheats: ['kubectl get | pods and quotas', 'kubectl describe | events, and Used vs Hard', 'kubectl scale | change replicas', 'kubectl create quota | a new quota', 'kubectl delete quota | remove the old one'],
     hints: [
-      'kubectl get pods -n team-a shows 3 workers. kubectl get quota -n team-a shows pods: 3/3.',
+      'kubectl get pods -n team-a shows 3 workers. kubectl get quota -n team-a shows pods: 3/3. To see Used vs Hard: kubectl describe quota team-quota -n team-a (the -n is needed: the quota is not in default).',
       'kubectl describe deployment worker -n team-a ends with FailedCreate ... exceeded quota: team-quota, limited: pods=3.',
       'Option 1: kubectl scale deployment worker --replicas=3 -n team-a (stay inside the quota).',
       'Option 2: kubectl delete quota team-quota -n team-a, then kubectl create quota team-quota --hard=pods=6 -n team-a.',

@@ -143,7 +143,7 @@ export function completeLine(s: State, line: string): Completion {
       if (n === 1) return res(withKind('deployment', names.deployment));
       return res([]);
     case 'describe': case 'delete':
-      if (n === 0) return res(pick(['pod', 'deployment', 'service', 'node', 'configmap', 'secret', 'hpa', 'job', 'cronjob'].concat(cur ? ['po', 'deploy', 'svc', 'cm', 'cj'] : [])));
+      if (n === 0) return res(pick(['pod', 'deployment', 'service', 'node', 'configmap', 'secret', 'hpa', 'job', 'cronjob', 'quota', 'namespace'].concat(cur ? ['po', 'deploy', 'svc', 'cm', 'cj'] : [])));
       if (n === 1) return res(kindNames(args[0]));
       return res([]);
     case 'scale': case 'autoscale': case 'expose':

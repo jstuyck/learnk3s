@@ -111,3 +111,13 @@ describe('control plane pulse', () => {
     expect(s.cpPulse).toBe(0);
   });
 });
+
+describe('describe quota', () => {
+  it('works with a name, or without one for every quota of the namespace', () => {
+    const s = start('n-quota');
+    expect(cmd(s, 'kubectl describe quota')).toMatch(/No resources found in default namespace/);
+    expect(cmd(s, 'kubectl describe quota -n team-a')).toMatch(/Name:\s+team-quota[\s\S]*pods\s+3\s+3/);
+    expect(s.flags.describedQuota).toBe(true);
+    expect(cmd(s, 'kubectl describe quota team-quota -n team-a')).toMatch(/Used\s+Hard/);
+  });
+});
