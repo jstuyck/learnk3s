@@ -1,0 +1,21 @@
+{
+  "name": "kube-quest",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A 2D browser game that teaches Kubernetes through a campaign.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
